@@ -1,0 +1,11 @@
+{
+  "installCommand": "cd class-connect-pro-main && npm install",
+  "buildCommand": "cd class-connect-pro-main && npm run build",
+  "outputDirectory": "class-connect-pro-main/dist",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
