@@ -1,0 +1,170 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* RUPPER Connect - Classroom Management Design System
+   All colors MUST be HSL. Define tokens here, never inline in components. */
+
+@layer base {
+  :root {
+    /* Surfaces */
+    --background: 220 25% 97%;
+    --foreground: 222 35% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 35% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 35% 15%;
+
+    /* Brand - RUPPER red + gold */
+    --primary: 0 78% 50%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 0 85% 62%;
+
+    /* Accent - gold/yellow from university logo */
+    --accent: 45 95% 55%;
+    --accent-foreground: 24 80% 16%;
+
+    --secondary: 220 30% 93%;
+    --secondary-foreground: 222 35% 20%;
+
+    --muted: 220 25% 94%;
+    --muted-foreground: 222 15% 45%;
+
+    /* Status */
+    --success: 152 60% 38%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 222 40% 12%;
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --info: 210 90% 50%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 220 20% 88%;
+    --input: 220 20% 88%;
+    --ring: 0 78% 50%;
+
+    --radius: 0.75rem;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(0 78% 50%), hsl(24 90% 48%));
+    --gradient-accent: linear-gradient(135deg, hsl(45 95% 55%), hsl(36 95% 46%));
+    --gradient-hero: linear-gradient(135deg, hsl(0 78% 42%) 0%, hsl(0 78% 50%) 55%, hsl(45 95% 55%) 100%);
+    --gradient-subtle: linear-gradient(180deg, hsl(220 30% 98%), hsl(220 25% 95%));
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(0 45% 22% / 0.05);
+    --shadow-md: 0 4px 12px -2px hsl(0 45% 22% / 0.08);
+    --shadow-lg: 0 12px 32px -8px hsl(0 50% 25% / 0.18);
+    --shadow-glow: 0 0 0 4px hsl(0 78% 50% / 0.12);
+
+    /* Sidebar */
+    --sidebar-background: 0 70% 22%;
+    --sidebar-foreground: 0 0% 96%;
+    --sidebar-primary: 45 95% 55%;
+    --sidebar-primary-foreground: 24 80% 16%;
+    --sidebar-accent: 0 72% 32%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 62% 30%;
+    --sidebar-ring: 45 95% 55%;
+
+    /* Motion */
+    --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .dark {
+    --background: 235 35% 8%;
+    --foreground: 220 25% 95%;
+
+    --card: 235 35% 12%;
+    --card-foreground: 220 25% 95%;
+
+    --popover: 235 35% 12%;
+    --popover-foreground: 220 25% 95%;
+
+    --primary: 0 78% 58%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 0 85% 65%;
+
+    --accent: 45 95% 60%;
+    --accent-foreground: 222 40% 10%;
+
+    --secondary: 235 30% 18%;
+    --secondary-foreground: 220 25% 95%;
+
+    --muted: 235 25% 16%;
+    --muted-foreground: 220 15% 65%;
+
+    --success: 152 55% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 90% 55%;
+    --warning-foreground: 222 40% 10%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --info: 210 85% 55%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 235 25% 20%;
+    --input: 235 25% 20%;
+    --ring: 0 78% 58%;
+
+    --sidebar-background: 0 60% 15%;
+    --sidebar-foreground: 0 0% 96%;
+    --sidebar-primary: 45 95% 60%;
+    --sidebar-primary-foreground: 222 40% 10%;
+    --sidebar-accent: 0 55% 22%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 45% 24%;
+    --sidebar-ring: 45 95% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    @apply tracking-tight;
+  }
+}
+
+@layer utilities {
+  .bg-gradient-primary { background-image: var(--gradient-primary); }
+  .bg-gradient-accent  { background-image: var(--gradient-accent); }
+  .bg-gradient-hero    { background-image: var(--gradient-hero); }
+  .auth-bg {
+    background-image:
+      linear-gradient(120deg, hsl(0 0% 0% / 0.55), hsl(0 78% 18% / 0.42)),
+      url("@/assets/rupp-building-bg.png");
+    background-size: cover;
+    background-position: center;
+  }
+
+  .campus-hero-bg {
+    background-image:
+      linear-gradient(135deg, hsl(0 78% 35% / 0.88), hsl(0 78% 48% / 0.72), hsl(45 95% 50% / 0.50)),
+      url("@/assets/rupp-campus-bg.png");
+    background-size: cover;
+    background-position: center;
+  }
+  .bg-gradient-subtle  { background-image: var(--gradient-subtle); }
+  .shadow-elegant      { box-shadow: var(--shadow-lg); }
+  .shadow-soft         { box-shadow: var(--shadow-md); }
+  .shadow-glow         { box-shadow: var(--shadow-glow); }
+  .transition-base     { transition: all var(--transition-base); }
+}

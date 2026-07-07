@@ -1,0 +1,10 @@
+const router = require("express").Router();
+const auth = require("../middleware/auth");
+const requireTeacher = require("../middleware/requireTeacher");
+const asyncHandler = require("../middleware/asyncHandler");
+const c = require("../controllers/scheduleController");
+router.get("/", auth, asyncHandler(c.getSchedules));
+router.post("/", auth, requireTeacher, asyncHandler(c.createSchedule));
+router.put("/:id", auth, requireTeacher, asyncHandler(c.updateSchedule));
+router.delete("/:id", auth, requireTeacher, asyncHandler(c.deleteSchedule));
+module.exports = router;

@@ -1,0 +1,10 @@
+const router = require("express").Router();
+const auth = require("../middleware/auth");
+const requireTeacher = require("../middleware/requireTeacher");
+const asyncHandler = require("../middleware/asyncHandler");
+const c = require("../controllers/announcementController");
+router.get("/", auth, asyncHandler(c.getAnnouncements));
+router.post("/", auth, requireTeacher, asyncHandler(c.createAnnouncement));
+router.put("/:id", auth, requireTeacher, asyncHandler(c.updateAnnouncement));
+router.delete("/:id", auth, requireTeacher, asyncHandler(c.deleteAnnouncement));
+module.exports = router;
