@@ -4,8 +4,9 @@
   "description": "Node.js + Express + MySQL backend for RUPPER Connect",
   "main": "server.js",
   "scripts": {
-  "dev": "nodemon --exec \"node server.js\""
-},
+    "start": "node server.js",
+    "dev": "nodemon --exec \"node server.js\""
+  },
 
   "keywords": [],
   "author": "",
