@@ -6,6 +6,7 @@ const oauth = require("../controllers/oauthController");
 
 router.post("/signup", asyncHandler(c.signup));
 router.post("/login", asyncHandler(c.login));
+router.get("/oauth/status", asyncHandler(oauth.oauthStatus));
 router.get("/oauth/:provider", asyncHandler(oauth.startOAuth));
 router.get("/oauth/:provider/callback", asyncHandler(oauth.handleOAuthCallback));
 router.post("/oauth/:provider/callback", asyncHandler(oauth.handleOAuthCallback));

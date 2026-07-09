@@ -227,6 +227,17 @@ exports.startOAuth = async (req, res) => {
   return res.redirect(authUrl.toString());
 };
 
+exports.oauthStatus = async (req, res) => {
+  const providers = ["google", "facebook", "apple", "microsoft"];
+  const status = providers.reduce((acc, providerName) => {
+    const provider = getProvider(providerName);
+    acc[providerName] = Boolean(provider?.clientId && provider?.clientSecret);
+    return acc;
+  }, {});
+
+  res.json({ providers: status });
+};
+
 exports.handleOAuthCallback = async (req, res) => {
   const providerName = req.params.provider;
   const provider = getProvider(providerName);

@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { Apple, Facebook } from "lucide-react";
 
 import type { OAuthProvider } from "@/context/AuthContext";
+import { buildApiUrl } from "@/lib/api";
 
 interface SocialLoginButtonsProps {
   onProviderSelect?: (provider: OAuthProvider, label: string) => void;
@@ -37,22 +39,47 @@ const providers: Array<{
 ];
 
 export function SocialLoginButtons({ onProviderSelect, disabled = false }: SocialLoginButtonsProps) {
+  const [configuredProviders, setConfiguredProviders] = useState<Record<OAuthProvider, boolean> | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    fetch(buildApiUrl("/auth/oauth/status"))
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (active && data?.providers) setConfiguredProviders(data.providers);
+      })
+      .catch(() => {
+        if (active) setConfiguredProviders(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {providers.map((provider) => (
-        <button
-          key={provider.id}
-          type="button"
-          data-auth-provider={provider.id}
-          aria-label={`Continue with ${provider.name}`}
-          disabled={disabled}
-          onClick={() => onProviderSelect?.(provider.id, provider.name)}
-          className="flex h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/90 px-2 text-xs font-bold text-slate-900 shadow-sm backdrop-blur-md transition-base hover:-translate-y-0.5 hover:border-primary/30 hover:bg-white hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-slate-950/70 dark:text-slate-100 dark:hover:bg-slate-900"
-        >
-          {provider.icon}
-          <span className="min-w-0 truncate">{provider.name}</span>
-        </button>
-      ))}
+      {providers.map((provider) => {
+        const configured = configuredProviders?.[provider.id] ?? true;
+        const isDisabled = disabled || !configured;
+
+        return (
+          <button
+            key={provider.id}
+            type="button"
+            data-auth-provider={provider.id}
+            aria-label={`Continue with ${provider.name}`}
+            title={configured ? `Continue with ${provider.name}` : `${provider.name} OAuth is not configured in Railway yet`}
+            disabled={isDisabled}
+            onClick={() => onProviderSelect?.(provider.id, provider.name)}
+            className="flex h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/90 px-2 text-xs font-bold text-slate-900 shadow-sm backdrop-blur-md transition-base hover:-translate-y-0.5 hover:border-primary/30 hover:bg-white hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-slate-950/70 dark:text-slate-100 dark:hover:bg-slate-900"
+          >
+            {provider.icon}
+            <span className="min-w-0 truncate">{provider.name}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
