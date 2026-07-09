@@ -88,7 +88,7 @@ export default function Signup() {
           autoComplete="name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Jane Doe"
+          placeholder="Full Name"
         />
 
         <AuthTextField

@@ -17,7 +17,7 @@ export function AuthTextField({ id, label, icon: Icon, className, ...props }: Au
         {label}
       </Label>
       <div className="relative">
-        <span className="pointer-events-none absolute left-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20 dark:bg-accent/20 dark:text-accent dark:ring-accent/25">
+        <span className="pointer-events-none absolute left-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/25 dark:bg-accent dark:text-accent-foreground dark:ring-accent/30">
           <Icon className="h-4 w-4 stroke-[2.4]" />
         </span>
         <Input

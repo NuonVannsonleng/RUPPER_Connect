@@ -30,7 +30,7 @@ const supportItems = [
 const Home = () => {
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-border/60 bg-background/95 shadow-sm backdrop-blur-xl">
+      <header className="relative z-50 border-b border-border/60 bg-background/95 shadow-sm backdrop-blur-xl md:fixed md:inset-x-0 md:top-0">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-5 py-3 md:h-20 md:flex-row md:items-center md:justify-between md:px-8">
           <a href="#home" className="flex items-center gap-3">
             <img src={schoolLogo} alt="University logo" className="h-12 w-12 rounded-full object-contain" />
@@ -69,7 +69,7 @@ const Home = () => {
 
       <section
         id="home"
-        className="relative min-h-[92vh] overflow-hidden bg-cover bg-center pt-40 md:pt-28"
+        className="relative min-h-[92vh] overflow-hidden bg-cover bg-center pt-12 md:pt-28"
         style={{ backgroundImage: `url(${campusBg})` }}
       >
         <div className="absolute inset-0 bg-black/62" />
