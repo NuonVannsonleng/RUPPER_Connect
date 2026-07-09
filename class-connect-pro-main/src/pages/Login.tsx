@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { GraduationCap, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { ArrowLeft, GraduationCap, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { AuthTextField } from "@/components/auth/AuthTextField";
@@ -47,6 +47,13 @@ export default function Login() {
       subtitle="Access your classes, announcements, schedules, and academic tools through one connected university platform."
     >
       <div className="mb-7">
+        <Link
+          to="/"
+          className="mb-5 inline-flex items-center gap-2 rounded-full text-sm font-bold text-slate-700 transition-base hover:text-primary dark:text-slate-200 dark:hover:text-accent"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to home
+        </Link>
         <p className="text-sm font-bold uppercase tracking-[0.2em] text-primary dark:text-accent">Secure login</p>
         <h1 className="mt-2 font-heading text-3xl font-bold text-slate-950 dark:text-slate-50">Sign in to RUPPER Connect</h1>
         <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
