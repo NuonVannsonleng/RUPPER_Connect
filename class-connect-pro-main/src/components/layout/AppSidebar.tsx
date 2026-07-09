@@ -24,7 +24,7 @@ import {
 import { useRole } from "@/context/RoleContext";
 
 const teacherNav = [
-  { title: "Dashboard",     url: "/",              icon: LayoutDashboard },
+  { title: "Dashboard",     url: "/dashboard",     icon: LayoutDashboard },
   { title: "Attendance",    url: "/attendance",    icon: ClipboardCheck },
   { title: "Gradebook",     url: "/gradebook",     icon: BookOpen },
   { title: "Schedule",      url: "/schedule",      icon: CalendarDays },
@@ -33,7 +33,7 @@ const teacherNav = [
 ];
 
 const studentNav = [
-  { title: "Dashboard",     url: "/",              icon: LayoutDashboard },
+  { title: "Dashboard",     url: "/dashboard",     icon: LayoutDashboard },
   { title: "My Attendance", url: "/attendance",    icon: ClipboardCheck },
   { title: "My Grades",     url: "/gradebook",     icon: BookOpen },
   { title: "Schedule",      url: "/schedule",      icon: CalendarDays },
@@ -49,8 +49,7 @@ export function AppSidebar() {
 
   const items = role === "teacher" ? teacherNav : studentNav;
 
-  const isActive = (path: string) =>
-    path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
+  const isActive = (path: string) => location.pathname.startsWith(path);
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
@@ -99,7 +98,7 @@ export function AppSidebar() {
                           : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
                       }`}
                     >
-                      <RouterNavLink to={item.url} end={item.url === "/"}>
+                      <RouterNavLink to={item.url} end={item.url === "/dashboard"}>
                         <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
                         {active && (

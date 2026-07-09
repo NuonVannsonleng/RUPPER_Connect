@@ -9,6 +9,7 @@ import { RoleProvider } from "@/context/RoleContext";
 import { AuthProvider } from "@/context/AuthContext";
 import AppLayout from "@/components/layout/AppLayout";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import { RouteTransition } from "@/components/shared/RouteTransition";
 
 import Dashboard from "./pages/Dashboard";
 import Attendance from "./pages/Attendance";
@@ -18,7 +19,10 @@ import Announcements from "./pages/Announcements";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
+import OAuthCallback from "./pages/OAuthCallback";
 import Settings from "./pages/Settings";
+import Home from "./pages/Home";
+import FacultyDetail from "./pages/FacultyDetail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,30 +36,35 @@ const App = () => (
         <AuthProvider>
           <RoleProvider>
             <BrowserRouter>
-              <Routes>
-                {/* Public auth routes */}
-                <Route path="/login" element={<Login />} />
-                <Route path="/signup" element={<Signup />} />
-                <Route path="/forgot-password" element={<ForgotPassword />} />
+              <RouteTransition>
+                <Routes>
+                  {/* Public routes */}
+                  <Route path="/" element={<Home />} />
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/signup" element={<Signup />} />
+                  <Route path="/forgot-password" element={<ForgotPassword />} />
+                  <Route path="/oauth/callback" element={<OAuthCallback />} />
+                  <Route path="/faculty/:facultyId" element={<FacultyDetail />} />
 
-                {/* Protected app routes */}
-                <Route
-                  element={
-                    <ProtectedRoute>
-                      <AppLayout />
-                    </ProtectedRoute>
-                  }
-                >
-                  <Route path="/"               element={<Dashboard />} />
-                  <Route path="/attendance"     element={<Attendance />} />
-                  <Route path="/gradebook"      element={<Gradebook />} />
-                  <Route path="/schedule"       element={<Schedule />} />
-                  <Route path="/announcements"  element={<Announcements />} />
-                  <Route path="/settings"       element={<Settings />} />
-                </Route>
+                  {/* Protected app routes */}
+                  <Route
+                    element={
+                      <ProtectedRoute>
+                        <AppLayout />
+                      </ProtectedRoute>
+                    }
+                  >
+                    <Route path="/dashboard"      element={<Dashboard />} />
+                    <Route path="/attendance"     element={<Attendance />} />
+                    <Route path="/gradebook"      element={<Gradebook />} />
+                    <Route path="/schedule"       element={<Schedule />} />
+                    <Route path="/announcements"  element={<Announcements />} />
+                    <Route path="/settings"       element={<Settings />} />
+                  </Route>
 
-                <Route path="*" element={<NotFound />} />
-              </Routes>
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </RouteTransition>
             </BrowserRouter>
           </RoleProvider>
         </AuthProvider>

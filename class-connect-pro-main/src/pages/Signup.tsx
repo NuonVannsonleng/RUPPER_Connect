@@ -1,21 +1,29 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { GraduationCap, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { toast } from "sonner";
+
+import { AuthTextField } from "@/components/auth/AuthTextField";
+import { SocialLoginButtons } from "@/components/auth/SocialLoginButtons";
+import { UniversityAuthShell } from "@/components/auth/UniversityAuthShell";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { useAuth, UserRole } from "@/context/AuthContext";
-import { toast } from "sonner";
-import schoolLogo from "@/assets/school-logo.png";
+import { OAuthProvider, useAuth, UserRole } from "@/context/AuthContext";
 
 export default function Signup() {
-  const { signup } = useAuth();
+  const { signup, startOAuthLogin } = useAuth();
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("student");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeProvider, setActiveProvider] = useState<string | null>(null);
+
+  const handleSocialLogin = (provider: OAuthProvider, label: string) => {
+    setActiveProvider(label);
+    startOAuthLogin(provider, role, true);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,71 +33,112 @@ export default function Signup() {
 
     if (ok) {
       toast.success(`Account created! Welcome, ${name}`);
-      navigate("/");
+      navigate("/dashboard");
     } else {
       toast.error("An account with this email already exists");
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center auth-bg p-4">
-      <Card className="w-full max-w-md border-0 bg-white/95 p-8 shadow-elegant backdrop-blur-sm">
-        <div className="mb-6 flex flex-col items-center text-center">
-          <img src={schoolLogo} alt="RUPPER logo" className="mx-auto mb-3 h-24 w-24 rounded-full object-contain shadow-lg ring-4 ring-accent/30" />
-          <h1 className="font-display text-3xl font-extrabold tracking-wide text-primary">RUPPER Connect</h1>
-          <div className="mt-3 h-1 w-32 rounded-full bg-gradient-primary" />
-          <h2 className="mt-4 font-display text-xl font-bold">Create your account</h2>
-          <p className="text-sm text-muted-foreground">Connect - Learn - Succeed</p>
-        </div>
+    <UniversityAuthShell
+      eyebrow="Join the portal"
+      title="Create your academic workspace."
+      subtitle="Set up a student or teacher account and start managing schedules, communication, and learning activity in one place."
+    >
+      <div className="mb-7">
+        <p className="text-sm font-bold uppercase tracking-[0.2em] text-primary dark:text-accent">Create account</p>
+        <h1 className="mt-2 font-heading text-3xl font-bold text-slate-950 dark:text-slate-50">Start with RUPPER Connect</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+          Choose your role and create your university portal profile.
+        </p>
+      </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label>I am a</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {(["student", "teacher"] as const).map((r) => (
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold text-slate-900 dark:text-slate-100">I am a</Label>
+          <div className="grid grid-cols-2 gap-3">
+            {(["student", "teacher"] as const).map((item) => {
+              const Icon = item === "student" ? GraduationCap : UserRound;
+              const active = role === item;
+
+              return (
                 <button
-                  key={r}
+                  key={item}
                   type="button"
-                  onClick={() => setRole(r)}
-                  className={`rounded-lg border p-3 text-sm font-semibold capitalize transition-base ${
-                    role === r
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                  onClick={() => setRole(item)}
+                  className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-bold capitalize shadow-sm backdrop-blur-md transition-base hover:-translate-y-0.5 ${
+                    active
+                      ? "border-primary/40 bg-primary text-primary-foreground shadow-glow"
+                      : "border-slate-200/80 bg-white/90 text-slate-700 hover:border-primary/30 hover:bg-white hover:text-slate-950 dark:border-white/10 dark:bg-slate-950/70 dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-slate-50"
                   }`}
                 >
-                  {r}
+                  <Icon className="h-4 w-4" />
+                  {item}
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
+        </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="name">Full name</Label>
-            <Input id="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
-          </div>
+        <AuthTextField
+          id="name"
+          label="Full name"
+          icon={UserRound}
+          required
+          autoComplete="name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Jane Doe"
+        />
 
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
-          </div>
+        <AuthTextField
+          id="email"
+          label="Email"
+          icon={Mail}
+          type="email"
+          required
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+        />
 
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" />
-          </div>
+        <AuthTextField
+          id="password"
+          label="Password"
+          icon={LockKeyhole}
+          type="password"
+          required
+          minLength={6}
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="At least 6 characters"
+        />
 
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Creating account..." : "Create account"}
-          </Button>
-        </form>
+        <Button
+          type="submit"
+          className="h-12 w-full rounded-xl bg-gradient-primary font-bold shadow-soft transition-base hover:-translate-y-0.5 hover:shadow-elegant"
+          disabled={isSubmitting || Boolean(activeProvider)}
+        >
+          {isSubmitting ? "Creating account..." : activeProvider ? `Opening ${activeProvider}...` : "Create account"}
+        </Button>
+      </form>
 
-        <p className="mt-6 text-center text-sm text-muted-foreground">
-          Already have an account?{" "}
-          <Link to="/login" className="font-semibold text-primary hover:underline">
-            Sign in
-          </Link>
-        </p>
-      </Card>
-    </div>
+      <div className="my-6 flex items-center gap-3">
+        <div className="h-px flex-1 bg-border/70" />
+        <span className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">or</span>
+        <div className="h-px flex-1 bg-border/70" />
+      </div>
+
+      <SocialLoginButtons onProviderSelect={handleSocialLogin} disabled={isSubmitting || Boolean(activeProvider)} />
+
+      <p className="mt-6 text-center text-sm text-slate-600 dark:text-slate-300">
+        Already have an account?{" "}
+        <Link to="/login" className="font-bold text-primary transition-base hover:text-primary/80 dark:text-accent dark:hover:text-accent/80">
+          Sign in
+        </Link>
+      </p>
+    </UniversityAuthShell>
   );
 }

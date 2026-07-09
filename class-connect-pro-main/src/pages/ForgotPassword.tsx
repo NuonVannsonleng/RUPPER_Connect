@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { GraduationCap, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { toast } from "sonner";
+
+import { AuthTextField } from "@/components/auth/AuthTextField";
+import { UniversityAuthShell } from "@/components/auth/UniversityAuthShell";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { useAuth, UserRole } from "@/context/AuthContext";
-import { toast } from "sonner";
-import schoolLogo from "@/assets/school-logo.png";
 
 export default function ForgotPassword() {
   const { resetPassword } = useAuth();
@@ -42,62 +43,99 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center auth-bg p-4">
-      <Card className="w-full max-w-md border-0 bg-white/95 p-8 shadow-elegant backdrop-blur-sm">
-        <div className="mb-6 flex flex-col items-center text-center">
-          <img src={schoolLogo} alt="RUPPER logo" className="mx-auto mb-3 h-20 w-20 rounded-full object-contain shadow-lg ring-4 ring-accent/30" />
-          <h1 className="font-display text-2xl font-bold text-primary">Reset password</h1>
-          <p className="text-sm text-muted-foreground">Set a new password for your backend account.</p>
-        </div>
+    <UniversityAuthShell
+      eyebrow="Account recovery"
+      title="Get back to your university portal."
+      subtitle="Reset your student or teacher password and return to your connected academic workspace."
+    >
+      <div className="mb-7">
+        <p className="text-sm font-bold uppercase tracking-[0.2em] text-primary dark:text-accent">Reset password</p>
+        <h1 className="mt-2 font-heading text-3xl font-bold text-slate-950 dark:text-slate-50">Recover your account</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+          Enter your account email and choose a new secure password.
+        </p>
+      </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label>I am a</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {(["student", "teacher"] as const).map((r) => (
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold text-slate-900 dark:text-slate-100">I am a</Label>
+          <div className="grid grid-cols-2 gap-3">
+            {(["student", "teacher"] as const).map((item) => {
+              const Icon = item === "student" ? GraduationCap : UserRound;
+              const active = role === item;
+
+              return (
                 <button
-                  key={r}
+                  key={item}
                   type="button"
-                  onClick={() => setRole(r)}
-                  className={`rounded-lg border p-3 text-sm font-semibold capitalize transition-base ${
-                    role === r
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-secondary text-muted-foreground hover:text-foreground"
+                  onClick={() => setRole(item)}
+                  className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-bold capitalize shadow-sm backdrop-blur-md transition-base hover:-translate-y-0.5 ${
+                    active
+                      ? "border-primary/40 bg-primary text-primary-foreground shadow-glow"
+                      : "border-slate-200/80 bg-white/90 text-slate-700 hover:border-primary/30 hover:bg-white hover:text-slate-950 dark:border-white/10 dark:bg-slate-950/70 dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-slate-50"
                   }`}
                 >
-                  {r}
+                  <Icon className="h-4 w-4" />
+                  {item}
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
+        </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="email">Account email</Label>
-            <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
-          </div>
+        <AuthTextField
+          id="email"
+          label="Account email"
+          icon={Mail}
+          type="email"
+          required
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+        />
 
-          <div className="space-y-2">
-            <Label htmlFor="newPassword">New password</Label>
-            <Input id="newPassword" type="password" required minLength={6} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-          </div>
+        <AuthTextField
+          id="newPassword"
+          label="New password"
+          icon={LockKeyhole}
+          type="password"
+          required
+          minLength={6}
+          autoComplete="new-password"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          placeholder="At least 6 characters"
+        />
 
-          <div className="space-y-2">
-            <Label htmlFor="confirmPassword">Confirm password</Label>
-            <Input id="confirmPassword" type="password" required minLength={6} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
-          </div>
+        <AuthTextField
+          id="confirmPassword"
+          label="Confirm password"
+          icon={LockKeyhole}
+          type="password"
+          required
+          minLength={6}
+          autoComplete="new-password"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          placeholder="Repeat your new password"
+        />
 
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Resetting..." : "Reset password"}
-          </Button>
-        </form>
+        <Button
+          type="submit"
+          className="h-12 w-full rounded-xl bg-gradient-primary font-bold shadow-soft transition-base hover:-translate-y-0.5 hover:shadow-elegant"
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? "Resetting..." : "Reset password"}
+        </Button>
+      </form>
 
-        <p className="mt-6 text-center text-sm text-muted-foreground">
-          Remember your password?{" "}
-          <Link to="/login" className="font-semibold text-primary hover:underline">
-            Sign in
-          </Link>
-        </p>
-      </Card>
-    </div>
+      <p className="mt-6 text-center text-sm text-slate-600 dark:text-slate-300">
+        Remember your password?{" "}
+        <Link to="/login" className="font-bold text-primary transition-base hover:text-primary/80 dark:text-accent dark:hover:text-accent/80">
+          Sign in
+        </Link>
+      </p>
+    </UniversityAuthShell>
   );
 }

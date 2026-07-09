@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { apiRequest, getToken, TOKEN_KEY } from "@/lib/api";
+import { apiRequest, buildApiUrl, getToken, TOKEN_KEY } from "@/lib/api";
 
 export type UserRole = "teacher" | "student";
+export type OAuthProvider = "google" | "facebook" | "apple" | "microsoft";
 
 export interface AuthUser {
   id?: number;
@@ -26,6 +27,8 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string, role: UserRole, rememberMe?: boolean) => Promise<boolean>;
+  startOAuthLogin: (provider: OAuthProvider, role: UserRole, rememberMe?: boolean) => void;
+  completeOAuthLogin: (token: string, rememberMe?: boolean) => Promise<boolean>;
   signup: (name: string, email: string, password: string, role: UserRole) => Promise<boolean>;
   logout: () => void;
   resetPassword: (email: string, role: UserRole, newPassword: string) => Promise<boolean>;
@@ -132,6 +135,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const startOAuthLogin = (provider: OAuthProvider, role: UserRole, rememberMe = true) => {
+    const params = new URLSearchParams({
+      role,
+      rememberMe: String(rememberMe),
+      frontendOrigin: window.location.origin,
+    });
+    window.location.href = buildApiUrl(`/auth/oauth/${provider}?${params.toString()}`);
+  };
+
+  const completeOAuthLogin = async (token: string, rememberMe = true) => {
+    const storage = rememberMe ? localStorage : sessionStorage;
+    const otherStorage = rememberMe ? sessionStorage : localStorage;
+
+    storage.setItem(TOKEN_KEY, token);
+    otherStorage.removeItem(TOKEN_KEY);
+
+    try {
+      const data = await apiRequest<{ user: AuthUser }>("/auth/me");
+      persistSession(data.user, token, rememberMe);
+      return true;
+    } catch {
+      clearSession();
+      return false;
+    }
+  };
+
   const resetPassword = async (email: string, role: UserRole, newPassword: string) => {
     try {
       await apiRequest<{ message: string }>("/auth/reset-password", {
@@ -179,7 +208,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = clearSession;
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, resetPassword, changePassword, updateProfile }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        login,
+        startOAuthLogin,
+        completeOAuthLogin,
+        signup,
+        logout,
+        resetPassword,
+        changePassword,
+        updateProfile,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

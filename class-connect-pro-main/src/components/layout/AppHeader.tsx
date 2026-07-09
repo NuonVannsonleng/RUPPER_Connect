@@ -8,12 +8,10 @@ import {
   ClipboardCheck,
   LogOut,
   Megaphone,
-  Search,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -24,6 +22,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import type { Announcement } from "@/data/mockData";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
+import { GlobalSearch } from "./GlobalSearch";
 
 type NotificationItem = {
   id: string;
@@ -176,14 +175,7 @@ export function AppHeader() {
         </Tooltip>
       </div>
 
-      {/* Search hidden on mobile to save space */}
-      <div className="relative hidden flex-1 max-w-md md:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search students, classes, announcements..."
-          className="h-10 pl-9 bg-secondary/60 border-transparent focus-visible:bg-background"
-        />
-      </div>
+      <GlobalSearch />
 
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
         <Popover>
