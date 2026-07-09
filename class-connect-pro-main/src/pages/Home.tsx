@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import { FacultyCard } from "@/components/faculty/FacultyCard";
+import { ThemeModeToggle } from "@/components/shared/ThemeModeToggle";
 import { faculties } from "@/data/faculties";
 import campusBg from "@/assets/rupp-campus-bg.png";
 import schoolLogo from "@/assets/school-logo.png";
@@ -53,13 +54,16 @@ const Home = () => {
             ))}
           </nav>
 
-          <Link
-            to="/login"
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-md transition-base hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-lg"
-          >
-            Enter Portal
-            <ArrowRight className="h-4 w-4" />
-          </Link>
+          <div className="flex items-center gap-3">
+            <ThemeModeToggle />
+            <Link
+              to="/login"
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-md transition-base hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-lg"
+            >
+              Enter Portal
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
         </div>
       </header>
 
