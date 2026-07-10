@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import { apiRequest, buildApiUrl, getToken, TOKEN_KEY } from "@/lib/api";
 
 export type UserRole = "teacher" | "student";
-export type OAuthProvider = "google" | "facebook" | "apple" | "microsoft";
+export type OAuthProvider = "google";
 
 export interface AuthUser {
   id?: number;

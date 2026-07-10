@@ -58,13 +58,6 @@ DB_SSL=false
 JWT_SECRET=change_this_to_a_long_random_secret
 GOOGLE_OAUTH_CLIENT_ID=your_google_client_id
 GOOGLE_OAUTH_CLIENT_SECRET=your_google_client_secret
-FACEBOOK_OAUTH_CLIENT_ID=your_facebook_client_id
-FACEBOOK_OAUTH_CLIENT_SECRET=your_facebook_client_secret
-APPLE_OAUTH_CLIENT_ID=your_apple_services_id
-APPLE_OAUTH_CLIENT_SECRET=your_generated_apple_client_secret
-MICROSOFT_OAUTH_CLIENT_ID=your_microsoft_client_id
-MICROSOFT_OAUTH_CLIENT_SECRET=your_microsoft_client_secret
-MICROSOFT_TENANT_ID=common
 ```
 
 If your hosted MySQL provider requires SSL, set `DB_SSL=true`.
@@ -73,29 +66,19 @@ After the backend is deployed, copy its public URL and add this environment vari
 
 ```env
 VITE_API_URL=https://your-backend-url/api
-VITE_GOOGLE_OAUTH_CLIENT_ID=your_google_client_id
-VITE_FACEBOOK_OAUTH_CLIENT_ID=your_facebook_client_id
-VITE_APPLE_OAUTH_CLIENT_ID=your_apple_client_id
-VITE_MICROSOFT_OAUTH_CLIENT_ID=your_microsoft_client_id
 ```
 
-## OAuth callback URLs
-Register these callback URLs in each provider dashboard:
+## Google OAuth callback URL
+Register this callback URL in Google Cloud Console:
 
 ```text
 https://class-connect-pro-rupp-production.up.railway.app/api/auth/oauth/google/callback
-https://class-connect-pro-rupp-production.up.railway.app/api/auth/oauth/facebook/callback
-https://class-connect-pro-rupp-production.up.railway.app/api/auth/oauth/apple/callback
-https://class-connect-pro-rupp-production.up.railway.app/api/auth/oauth/microsoft/callback
 ```
 
-For local development, also register:
+For local development, also register this callback URL:
 
 ```text
 http://localhost:5000/api/auth/oauth/google/callback
-http://localhost:5000/api/auth/oauth/facebook/callback
-http://localhost:5000/api/auth/oauth/apple/callback
-http://localhost:5000/api/auth/oauth/microsoft/callback
 ```
 
 ## 5. Run frontend

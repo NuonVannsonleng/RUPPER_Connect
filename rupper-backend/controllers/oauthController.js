@@ -46,8 +46,6 @@ const redirectWithError = (res, frontendOrigin, message) => {
 };
 
 const getProvider = (provider) => {
-  const microsoftTenant = process.env.MICROSOFT_TENANT_ID || "common";
-
   const providers = {
     google: {
       label: "Google",
@@ -58,35 +56,6 @@ const getProvider = (provider) => {
       userInfoUrl: "https://www.googleapis.com/oauth2/v3/userinfo",
       scope: "openid email profile",
       authExtras: { prompt: "select_account", access_type: "offline" },
-    },
-    facebook: {
-      label: "Facebook",
-      clientId: process.env.FACEBOOK_OAUTH_CLIENT_ID,
-      clientSecret: process.env.FACEBOOK_OAUTH_CLIENT_SECRET,
-      authUrl: "https://www.facebook.com/v20.0/dialog/oauth",
-      tokenUrl: "https://graph.facebook.com/v20.0/oauth/access_token",
-      userInfoUrl: "https://graph.facebook.com/me?fields=id,name,email,picture",
-      scope: "email,public_profile",
-      authExtras: { auth_type: "rerequest" },
-    },
-    apple: {
-      label: "Apple",
-      clientId: process.env.APPLE_OAUTH_CLIENT_ID,
-      clientSecret: process.env.APPLE_OAUTH_CLIENT_SECRET,
-      authUrl: "https://appleid.apple.com/auth/authorize",
-      tokenUrl: "https://appleid.apple.com/auth/token",
-      scope: "name email",
-      authExtras: { response_mode: "form_post" },
-    },
-    microsoft: {
-      label: "Microsoft",
-      clientId: process.env.MICROSOFT_OAUTH_CLIENT_ID,
-      clientSecret: process.env.MICROSOFT_OAUTH_CLIENT_SECRET,
-      authUrl: `https://login.microsoftonline.com/${microsoftTenant}/oauth2/v2.0/authorize`,
-      tokenUrl: `https://login.microsoftonline.com/${microsoftTenant}/oauth2/v2.0/token`,
-      userInfoUrl: "https://graph.microsoft.com/oidc/userinfo",
-      scope: "openid email profile User.Read",
-      authExtras: { prompt: "select_account" },
     },
   };
 
@@ -113,40 +82,8 @@ const getJson = async (url, accessToken) => {
   return data;
 };
 
-const decodeJwtPayload = (token) => {
-  const payload = token.split(".")[1];
-  if (!payload) return {};
-  const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-  return JSON.parse(Buffer.from(normalized, "base64").toString("utf8"));
-};
-
 const getProfile = async (providerName, provider, tokenData) => {
-  if (providerName === "apple") {
-    const payload = decodeJwtPayload(tokenData.id_token || "");
-    return {
-      email: payload.email,
-      name: payload.name || (payload.email ? payload.email.split("@")[0] : "Apple User"),
-      avatar: "",
-    };
-  }
-
   const profile = await getJson(provider.userInfoUrl, tokenData.access_token);
-
-  if (providerName === "facebook") {
-    return {
-      email: profile.email,
-      name: profile.name || "Facebook User",
-      avatar: profile.picture?.data?.url || "",
-    };
-  }
-
-  if (providerName === "microsoft") {
-    return {
-      email: profile.email || profile.preferred_username,
-      name: profile.name || profile.email || "Microsoft User",
-      avatar: "",
-    };
-  }
 
   return {
     email: profile.email,
@@ -228,7 +165,7 @@ exports.startOAuth = async (req, res) => {
 };
 
 exports.oauthStatus = async (req, res) => {
-  const providers = ["google", "facebook", "apple", "microsoft"];
+  const providers = ["google"];
   const status = providers.reduce((acc, providerName) => {
     const provider = getProvider(providerName);
     acc[providerName] = Boolean(provider?.clientId && provider?.clientSecret);
