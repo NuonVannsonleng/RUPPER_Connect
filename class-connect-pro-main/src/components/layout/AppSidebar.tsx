@@ -3,8 +3,13 @@ import {
   LayoutDashboard,
   ClipboardCheck,
   BookOpen,
+  BookOpenCheck,
+  Brain,
   CalendarDays,
+  FileText,
   Megaphone,
+  MessagesSquare,
+  ScrollText,
   Settings,
 } from "lucide-react";
 import schoolLogo from "@/assets/school-logo.png";
@@ -25,18 +30,29 @@ import { useRole } from "@/context/RoleContext";
 
 const teacherNav = [
   { title: "Dashboard",     url: "/dashboard",     icon: LayoutDashboard },
+  { title: "Courses",       url: "/courses",       icon: BookOpenCheck },
+  { title: "Assignments",   url: "/assignments",   icon: FileText },
+  { title: "Quizzes",       url: "/quizzes",       icon: Brain },
   { title: "Attendance",    url: "/attendance",    icon: ClipboardCheck },
   { title: "Gradebook",     url: "/gradebook",     icon: BookOpen },
   { title: "Schedule",      url: "/schedule",      icon: CalendarDays },
+  { title: "Calendar",      url: "/calendar",      icon: CalendarDays },
+  { title: "Messages",      url: "/messages",      icon: MessagesSquare },
   { title: "Announcements", url: "/announcements", icon: Megaphone },
   { title: "Settings",      url: "/settings",      icon: Settings },
 ];
 
 const studentNav = [
   { title: "Dashboard",     url: "/dashboard",     icon: LayoutDashboard },
+  { title: "Courses",       url: "/courses",       icon: BookOpenCheck },
+  { title: "Assignments",   url: "/assignments",   icon: FileText },
+  { title: "Quizzes",       url: "/quizzes",       icon: Brain },
   { title: "My Attendance", url: "/attendance",    icon: ClipboardCheck },
   { title: "My Grades",     url: "/gradebook",     icon: BookOpen },
   { title: "Schedule",      url: "/schedule",      icon: CalendarDays },
+  { title: "Calendar",      url: "/calendar",      icon: CalendarDays },
+  { title: "Transcript",    url: "/transcript",    icon: ScrollText },
+  { title: "Messages",      url: "/messages",      icon: MessagesSquare },
   { title: "Announcements", url: "/announcements", icon: Megaphone },
   { title: "Settings",      url: "/settings",      icon: Settings },
 ];

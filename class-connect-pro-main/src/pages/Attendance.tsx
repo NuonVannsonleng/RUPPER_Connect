@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, Check, X, Clock, Save, Filter, Trash2 } from "lucide-react";
+import { Calendar, Check, X, Clock, Save, Filter, Trash2, QrCode, ScanLine, TimerReset } from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -78,6 +78,8 @@ export default function Attendance() {
   const [isSaving, setIsSaving] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [studentToRemove, setStudentToRemove] = useState<RosterStudent | null>(null);
+  const [qrSession, setQrSession] = useState<{ code: string; windowMinutes: number; expiresAt: string } | null>(null);
+  const [scanCode, setScanCode] = useState("");
 
   useEffect(() => {
     if (role !== "teacher") return;
@@ -141,6 +143,50 @@ export default function Attendance() {
     setRecords(next);
   };
 
+  const generateQrSession = () => {
+    apiRequest<{ code: string; windowMinutes: number; expiresAt: string }>("/academic/attendance-sessions", {
+      method: "POST",
+      body: JSON.stringify({ windowMinutes: 10 }),
+    })
+      .then((session) => {
+        setQrSession({
+          code: session.code,
+          windowMinutes: session.windowMinutes,
+          expiresAt: new Date(session.expiresAt).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        });
+        toast.success("QR attendance code generated", {
+          description: "Students can use this code during the 10 minute window.",
+        });
+      })
+      .catch(() => {
+        toast.error("Could not generate QR attendance code");
+      });
+  };
+
+  const handleScanAttendance = () => {
+    if (!scanCode.trim()) {
+      toast.error("Enter the QR attendance code first.");
+      return;
+    }
+
+    apiRequest<{ message: string }>("/academic/attendance-sessions/check-in", {
+      method: "POST",
+      body: JSON.stringify({ code: scanCode.trim() }),
+    })
+      .then(() => {
+        toast.success("Attendance recorded", {
+          description: "Your attendance was marked for today's class.",
+        });
+        setScanCode("");
+      })
+      .catch((error) => {
+        toast.error(error instanceof Error ? error.message : "Could not record attendance");
+      });
+  };
+
   const handleSave = async () => {
     const payload = Object.entries(records)
       .filter(([, status]) => status)
@@ -193,6 +239,33 @@ export default function Attendance() {
           title="My attendance"
           description="Track your presence across all subjects this semester."
         />
+        <Card className="mb-6 border-border/60 p-5 shadow-soft sm:p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <ScanLine className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="font-display text-lg font-bold text-foreground">Scan QR attendance</h2>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  Use the code shown by your teacher during the active attendance window.
+                </p>
+              </div>
+            </div>
+            <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+              <Input
+                value={scanCode}
+                onChange={(event) => setScanCode(event.target.value)}
+                placeholder="RUPPER-20260710-1234"
+                className="h-10 sm:w-64"
+              />
+              <Button className="bg-gradient-primary text-primary-foreground" onClick={handleScanAttendance}>
+                <Check className="mr-2 h-4 w-4" />
+                Mark present
+              </Button>
+            </div>
+          </div>
+        </Card>
         <Card className="border-border/60 p-6 shadow-soft">
           <div className="grid gap-4 sm:grid-cols-3">
             <SummaryTile label="Present" value="42 days" tone="success" />
@@ -238,6 +311,47 @@ export default function Attendance() {
         <SummaryTile label="Late" value={counts.late} tone="warning" />
         <SummaryTile label="Unmarked" value={counts.unmarked} tone="muted" />
       </div>
+
+      <Card className="mb-6 border-border/60 p-5 shadow-soft sm:p-6">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-center">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <QrCode className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="font-display text-lg font-bold text-foreground">QR attendance session</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                Generate a temporary attendance code for the current class. Students can scan or enter the code before the window closes.
+              </p>
+              {qrSession && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-3 py-1 text-success">
+                    <TimerReset className="h-3.5 w-3.5" />
+                    {qrSession.windowMinutes} min window
+                  </span>
+                  <span>Expires at {qrSession.expiresAt}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-secondary/30 p-4 text-center">
+            <div className="mx-auto grid h-32 w-32 grid-cols-4 gap-1 rounded-xl bg-background p-3 shadow-soft">
+              {Array.from({ length: 16 }).map((_, index) => (
+                <span
+                  key={index}
+                  className={`rounded-sm ${qrSession && (index + qrSession.code.length) % 3 !== 0 ? "bg-foreground" : "bg-muted"}`}
+                />
+              ))}
+            </div>
+            <p className="mt-3 font-mono text-sm font-semibold text-foreground">{qrSession?.code || "No active code"}</p>
+            <Button className="mt-4 w-full bg-gradient-primary text-primary-foreground" onClick={generateQrSession}>
+              <QrCode className="mr-2 h-4 w-4" />
+              Generate QR code
+            </Button>
+          </div>
+        </div>
+      </Card>
 
       <Card className="overflow-hidden border-border/60 shadow-soft">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-secondary/40 px-4 py-3 sm:px-6">

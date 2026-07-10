@@ -14,15 +14,13 @@ export function RouteTransition({ children }: { children: ReactNode }) {
   return (
     <>
       <div
-        className={`pointer-events-none fixed inset-x-0 top-0 z-[100] h-1 bg-gradient-primary transition-base ${
+        className={`pointer-events-none fixed inset-x-0 top-0 z-[100] h-1 bg-gradient-primary transition-all duration-300 ${
           loading ? "opacity-100" : "opacity-0"
         }`}
       >
         <div className="h-full w-2/3 animate-route-progress bg-accent shadow-glow" />
       </div>
-      <div key={location.pathname} className="animate-route-in">
-        {children}
-      </div>
+      {children}
     </>
   );
 }

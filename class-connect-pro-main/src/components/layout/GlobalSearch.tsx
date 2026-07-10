@@ -2,18 +2,27 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   BookOpen,
+  BookOpenCheck,
+  Brain,
   CalendarClock,
   FileText,
   GraduationCap,
   LayoutDashboard,
   Loader2,
   Megaphone,
+  MessageSquare,
   Search,
   Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
+import {
+  useAcademicAssignments,
+  useAcademicCalendar,
+  useAcademicCourses,
+  useAcademicQuizzes,
+} from "@/hooks/useAcademicPlatform";
 import { faculties } from "@/data/faculties";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { useSchedule } from "@/hooks/useSchedule";
@@ -50,6 +59,33 @@ const pageResults: SearchResult[] = [
     keywords: "present absent late students",
   },
   {
+    id: "page-courses",
+    type: "Page",
+    title: "Courses",
+    description: "Course materials, assignments, quizzes, discussions, attendance, and grades",
+    path: "/courses",
+    icon: BookOpenCheck,
+    keywords: "courses materials lecturer assignments quizzes discussions progress",
+  },
+  {
+    id: "page-assignments",
+    type: "Page",
+    title: "Assignments",
+    description: "Deadlines, submissions, scores, and teacher feedback",
+    path: "/assignments",
+    icon: FileText,
+    keywords: "assignment submit upload deadline feedback score",
+  },
+  {
+    id: "page-quizzes",
+    type: "Page",
+    title: "Quizzes",
+    description: "Online quizzes, exams, MCQ, true false, results, and auto grading",
+    path: "/quizzes",
+    icon: Brain,
+    keywords: "quiz exam assessment questions mcq true false time limit",
+  },
+  {
     id: "page-gradebook",
     type: "Page",
     title: "Gradebook",
@@ -57,6 +93,33 @@ const pageResults: SearchResult[] = [
     path: "/gradebook",
     icon: BookOpen,
     keywords: "grades scores assignments marks",
+  },
+  {
+    id: "page-calendar",
+    type: "Page",
+    title: "Academic Calendar",
+    description: "Exams, assignments, holidays, and university events",
+    path: "/calendar",
+    icon: CalendarClock,
+    keywords: "calendar academic exam assignment holiday event university",
+  },
+  {
+    id: "page-transcript",
+    type: "Page",
+    title: "Transcript",
+    description: "Course history, credits, semester GPA, and overall GPA",
+    path: "/transcript",
+    icon: GraduationCap,
+    keywords: "transcript gpa credits records grades semester pdf",
+  },
+  {
+    id: "page-messages",
+    type: "Page",
+    title: "Messages",
+    description: "Internal teacher and student communication",
+    path: "/messages",
+    icon: MessageSquare,
+    keywords: "messages chat inbox teacher student communication",
   },
   {
     id: "page-schedule",
@@ -87,36 +150,6 @@ const pageResults: SearchResult[] = [
   },
 ];
 
-const courseResults: SearchResult[] = [
-  {
-    id: "course-computer-science",
-    type: "Course",
-    title: "Computer Science",
-    description: "Programming, systems, and classroom technology resources",
-    path: "/schedule",
-    icon: GraduationCap,
-    keywords: "course programming lab technology",
-  },
-  {
-    id: "course-information-technology",
-    type: "Course",
-    title: "Information Technology",
-    description: "IT learning resources, schedules, and academic workflows",
-    path: "/schedule",
-    icon: GraduationCap,
-    keywords: "course network software support",
-  },
-  {
-    id: "course-academic-operations",
-    type: "Course",
-    title: "Academic Operations",
-    description: "Announcements, records, attendance, and class management",
-    path: "/dashboard",
-    icon: GraduationCap,
-    keywords: "management teacher student university",
-  },
-];
-
 const typeTone: Record<ResultType, string> = {
   Page: "bg-primary/10 text-primary",
   Faculty: "bg-primary/10 text-primary",
@@ -130,6 +163,10 @@ export function GlobalSearch() {
   const navigate = useNavigate();
   const { data: scheduleItems = [] } = useSchedule();
   const { data: announcementItems = [] } = useAnnouncements();
+  const { data: academicCourseItems = [] } = useAcademicCourses();
+  const { data: academicAssignmentItems = [] } = useAcademicAssignments();
+  const { data: academicQuizItems = [] } = useAcademicQuizzes();
+  const { data: academicCalendarItems = [] } = useAcademicCalendar();
   const [query, setQuery] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -190,8 +227,57 @@ export function GlobalSearch() {
       keywords: `${item.author} ${item.date} ${item.category} notice news`,
     }));
 
-    return [...pageResults, ...facultyResults, ...courseResults, ...scheduleResults, ...announcementResults];
-  }, [announcementItems, scheduleItems]);
+    const courseResults: SearchResult[] = academicCourseItems.map((course) => ({
+      id: `course-${course.id}`,
+      type: "Course",
+      title: `${course.code} ${course.title}`,
+      description: `${course.lecturer} - ${course.schedule} - ${course.room}`,
+      path: "/courses",
+      icon: GraduationCap,
+      keywords: `${course.faculty} ${course.department} materials quizzes assignments discussion attendance grades`,
+    }));
+
+    const assignmentResults = academicAssignmentItems.map((item) => ({
+      id: `academic-assignment-${item.id}`,
+      type: "Course" as const,
+      title: item.title,
+      description: `${item.courseCode} assignment due ${item.deadline}`,
+      path: "/assignments",
+      icon: FileText,
+      keywords: `${item.status} deadline submit score feedback`,
+    }));
+
+    const quizResults = academicQuizItems.map((item) => ({
+      id: `academic-quiz-${item.id}`,
+      type: "Course" as const,
+      title: item.title,
+      description: `${item.courseCode} quiz - ${item.questions} questions - ${item.timeLimit} minutes`,
+      path: "/quizzes",
+      icon: Brain,
+      keywords: `${item.status} mcq true false assessment exam result`,
+    }));
+
+    const calendarResults = academicCalendarItems.map((item) => ({
+      id: `academic-calendar-${item.id}`,
+      type: "Schedule" as const,
+      title: item.title,
+      description: `${item.type} - ${item.date}${item.course ? ` - ${item.course}` : ""}`,
+      path: "/calendar",
+      icon: CalendarClock,
+      keywords: `${item.priority} exam assignment holiday event academic date`,
+    }));
+
+    return [
+      ...pageResults,
+      ...facultyResults,
+      ...courseResults,
+      ...assignmentResults,
+      ...quizResults,
+      ...calendarResults,
+      ...scheduleResults,
+      ...announcementResults,
+    ];
+  }, [academicAssignmentItems, academicCalendarItems, academicCourseItems, academicQuizItems, announcementItems, scheduleItems]);
 
   const normalizedQuery = query.trim().toLowerCase();
   const results = useMemo(() => {

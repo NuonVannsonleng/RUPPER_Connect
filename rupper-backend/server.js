@@ -45,6 +45,7 @@ app.use("/api/grades", require("./routes/gradeRoutes"));
 app.use("/api/announcements", require("./routes/announcementRoutes"));
 app.use("/api/schedules", require("./routes/scheduleRoutes"));
 app.use("/api/students", require("./routes/studentRoutes"));
+app.use("/api/academic", require("./routes/academicRoutes"));
 
 app.use((err, req, res, next) => {
   console.error(err);

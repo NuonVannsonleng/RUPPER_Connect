@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus, Megaphone, Pin, AlertTriangle, Calendar, BookOpen, Pencil, Trash2 } from "lucide-react";
+import {
+  Bell,
+  BookOpen,
+  Calendar,
+  CheckCircle2,
+  Eye,
+  Megaphone,
+  Pencil,
+  Pin,
+  Plus,
+  AlertTriangle,
+  Trash2,
+} from "lucide-react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,6 +49,20 @@ const categoryConfig: Record<Announcement["category"], { label: string; icon: ty
   urgent: { label: "Urgent", icon: AlertTriangle, classes: "bg-destructive/10 text-destructive border-destructive/20" },
 };
 
+type AnnouncementPriority = "normal" | "high" | "urgent";
+
+const priorityConfig: Record<AnnouncementPriority, string> = {
+  normal: "bg-secondary text-secondary-foreground border-border",
+  high: "bg-warning/15 text-warning border-warning/20",
+  urgent: "bg-destructive/10 text-destructive border-destructive/20",
+};
+
+const getPriority = (category: Announcement["category"]): AnnouncementPriority => {
+  if (category === "urgent") return "urgent";
+  if (category === "exam") return "high";
+  return "normal";
+};
+
 export default function Announcements() {
   const { role } = useRole();
   const queryClient = useQueryClient();
@@ -47,6 +73,7 @@ export default function Announcements() {
   const [itemToDelete, setItemToDelete] = useState<Announcement | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [category, setCategory] = useState<Announcement["category"]>("general");
@@ -138,6 +165,17 @@ export default function Announcements() {
     }
   };
 
+  const unreadCount = items.filter((item) => !readIds.has(String(item.id))).length;
+  const urgentCount = items.filter((item) => getPriority(item.category) === "urgent").length;
+  const markRead = (item: Announcement) => {
+    setReadIds((current) => {
+      const next = new Set(current);
+      next.add(String(item.id));
+      return next;
+    });
+    toast.success("Marked as read");
+  };
+
   return (
     <>
       <PageHeader
@@ -157,6 +195,29 @@ export default function Announcements() {
           ) : undefined
         }
       />
+
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card className="border-border/60 p-4 shadow-soft">
+          <Bell className="mb-3 h-5 w-5 text-primary" />
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total notices</p>
+          <p className="mt-1 font-display text-2xl font-bold text-foreground">{items.length}</p>
+        </Card>
+        <Card className="border-border/60 p-4 shadow-soft">
+          <Eye className="mb-3 h-5 w-5 text-warning" />
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Unread</p>
+          <p className="mt-1 font-display text-2xl font-bold text-foreground">{unreadCount}</p>
+        </Card>
+        <Card className="border-border/60 p-4 shadow-soft">
+          <AlertTriangle className="mb-3 h-5 w-5 text-destructive" />
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Urgent</p>
+          <p className="mt-1 font-display text-2xl font-bold text-foreground">{urgentCount}</p>
+        </Card>
+        <Card className="border-border/60 p-4 shadow-soft">
+          <CheckCircle2 className="mb-3 h-5 w-5 text-success" />
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Read</p>
+          <p className="mt-1 font-display text-2xl font-bold text-foreground">{items.length - unreadCount}</p>
+        </Card>
+      </div>
 
       <Dialog
         open={open}
@@ -235,12 +296,14 @@ export default function Announcements() {
           const cfg = categoryConfig[announcement.category];
           const Icon = cfg.icon;
           const pinned = idx === 0 && announcement.category === "urgent";
+          const priority = getPriority(announcement.category);
+          const isRead = readIds.has(String(announcement.id));
           return (
             <Card
               key={announcement.id}
               className={`group flex flex-col gap-3 p-5 shadow-soft transition-base hover:-translate-y-0.5 hover:shadow-elegant ${
                 announcement.category === "urgent" ? "border-destructive/30" : "border-border/60"
-              }`}
+              } ${!isRead && role === "student" ? "ring-1 ring-primary/20" : ""}`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -248,9 +311,19 @@ export default function Announcements() {
                     <Icon className="h-5 w-5" />
                   </div>
                   <div>
-                    <Badge variant="outline" className={`text-[10px] uppercase tracking-wider ${cfg.classes}`}>
-                      {cfg.label}
-                    </Badge>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline" className={`text-[10px] uppercase tracking-wider ${cfg.classes}`}>
+                        {cfg.label}
+                      </Badge>
+                      <Badge variant="outline" className={`text-[10px] uppercase tracking-wider ${priorityConfig[priority]}`}>
+                        {priority} priority
+                      </Badge>
+                      {role === "student" && (
+                        <Badge variant={isRead ? "secondary" : "default"} className="text-[10px] uppercase tracking-wider">
+                          {isRead ? "Read" : "Unread"}
+                        </Badge>
+                      )}
+                    </div>
                     <h3 className="mt-1 font-display text-base font-bold leading-tight text-foreground">
                       {announcement.title}
                     </h3>
@@ -279,6 +352,16 @@ export default function Announcements() {
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </>
+                  )}
+                  {role === "student" && !isRead && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={() => markRead(announcement)}
+                    >
+                      Mark read
+                    </Button>
                   )}
                 </div>
               </div>

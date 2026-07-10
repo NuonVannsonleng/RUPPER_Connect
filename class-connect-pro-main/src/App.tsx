@@ -16,6 +16,12 @@ import Attendance from "./pages/Attendance";
 import Gradebook from "./pages/Gradebook";
 import Schedule from "./pages/Schedule";
 import Announcements from "./pages/Announcements";
+import Courses from "./pages/Courses";
+import Assignments from "./pages/Assignments";
+import Quizzes from "./pages/Quizzes";
+import AcademicCalendar from "./pages/AcademicCalendar";
+import Transcript from "./pages/Transcript";
+import Messages from "./pages/Messages";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
@@ -55,9 +61,15 @@ const App = () => (
                     }
                   >
                     <Route path="/dashboard"      element={<Dashboard />} />
+                    <Route path="/courses"        element={<Courses />} />
+                    <Route path="/assignments"    element={<Assignments />} />
+                    <Route path="/quizzes"        element={<Quizzes />} />
                     <Route path="/attendance"     element={<Attendance />} />
                     <Route path="/gradebook"      element={<Gradebook />} />
                     <Route path="/schedule"       element={<Schedule />} />
+                    <Route path="/calendar"       element={<AcademicCalendar />} />
+                    <Route path="/transcript"     element={<Transcript />} />
+                    <Route path="/messages"       element={<Messages />} />
                     <Route path="/announcements"  element={<Announcements />} />
                     <Route path="/settings"       element={<Settings />} />
                   </Route>
