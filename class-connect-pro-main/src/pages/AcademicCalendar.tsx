@@ -2,7 +2,9 @@ import { CalendarDays, CalendarRange, Clock, GraduationCap, PartyPopper, Plus } 
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
+import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -67,11 +69,7 @@ export default function AcademicCalendar() {
         }
       />
 
-      {isFetching && (
-        <div className="mb-4 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm text-muted-foreground">
-          Syncing calendar with backend...
-        </div>
-      )}
+      {isFetching && <SyncStatus label="the calendar" />}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {(["exam", "assignment", "holiday", "event"] as const).map((type) => {
@@ -95,6 +93,11 @@ export default function AcademicCalendar() {
             Upcoming academic events
           </div>
         </div>
+        {events.length === 0 && !isFetching && (
+          <div className="p-5">
+            <EmptyState icon={CalendarDays} title="No events scheduled" detail="Exams, deadlines, and university events will appear here." />
+          </div>
+        )}
         <div className="divide-y divide-border">
           {events.map((event) => {
             const Icon = typeIcon[event.type];

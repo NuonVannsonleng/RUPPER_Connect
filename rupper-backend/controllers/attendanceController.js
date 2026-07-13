@@ -16,6 +16,20 @@ exports.getAttendance = async (req, res) => {
   res.json(rows);
 };
 
+exports.getMySummary = async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT status, COUNT(*) AS count FROM attendance WHERE student_id = ? GROUP BY status",
+    [req.user.id]
+  );
+  const counts = { present: 0, absent: 0, late: 0 };
+  rows.forEach((row) => {
+    if (row.status in counts) counts[row.status] = Number(row.count);
+  });
+  const total = counts.present + counts.absent + counts.late;
+  const percentage = total ? Math.round(((counts.present + counts.late) / total) * 100) : 0;
+  res.json({ ...counts, total, percentage });
+};
+
 exports.saveAttendance = async (req, res) => {
   const { date, records } = req.body;
   if (!date || !Array.isArray(records)) return res.status(400).json({ message: "date and records are required" });

@@ -3,7 +3,9 @@ import { Mail, MessageSquarePlus, Send, UserRound } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
+import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -38,16 +40,19 @@ export default function Messages() {
   };
 
   const openThread = async (threadId: string, subject: string, unreadThread: boolean) => {
+    if (!unreadThread) {
+      toast.info(`Opened ${subject}`);
+      return;
+    }
+
     try {
-      if (unreadThread) {
-        await apiRequest<{ message: string }>(`/academic/messages/${threadId}/read`, {
-          method: "PUT",
-        });
-        await refreshMessages();
-      }
+      await apiRequest<{ message: string }>(`/academic/messages/${threadId}/read`, {
+        method: "PUT",
+      });
+      await refreshMessages();
       toast.info(`Opened ${subject}`);
     } catch {
-      toast.info(`Opened ${subject}`);
+      toast.error(`Could not mark "${subject}" as read`);
     }
   };
 
@@ -65,11 +70,7 @@ export default function Messages() {
         }
       />
 
-      {isFetching && (
-        <div className="mb-4 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm text-muted-foreground">
-          Syncing messages with backend...
-        </div>
-      )}
+      {isFetching && <SyncStatus label="messages" />}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.65fr)]">
         <Card className="overflow-hidden border-border/60 shadow-soft">
@@ -80,6 +81,11 @@ export default function Messages() {
             </div>
             <Badge variant="secondary">{unread} unread</Badge>
           </div>
+          {threads.length === 0 && !isFetching && (
+            <div className="p-5">
+              <EmptyState icon={Mail} title="No messages yet" detail="Conversations with teachers and students will appear here." />
+            </div>
+          )}
           <div className="divide-y divide-border">
             {threads.map((thread) => (
               <button

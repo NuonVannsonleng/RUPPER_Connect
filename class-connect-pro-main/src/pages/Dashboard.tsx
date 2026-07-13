@@ -30,19 +30,24 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { useAuth } from "@/context/AuthContext";
 import { useRole } from "@/context/RoleContext";
 import {
   attendanceTrend,
   gpaProgress,
   gradePerformance,
   platformNotifications,
-  studentAcademicProfile,
   teacherClassAnalytics,
 } from "@/data/academicPlatform";
-import { students } from "@/data/mockData";
-import { useAcademicAssignments, useAcademicCourses, useAcademicRiskAlerts } from "@/hooks/useAcademicPlatform";
+import {
+  useAcademicAssignments,
+  useAcademicCourses,
+  useAcademicRiskAlerts,
+  useAcademicTranscript,
+} from "@/hooks/useAcademicPlatform";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
-import { calculateClassAverage, calculateStudentAverages, useGradebook } from "@/hooks/useGradebook";
+import { useAttendanceSummary } from "@/hooks/useAttendanceSummary";
+import { calculateClassAverage, calculateStudentAverages, useGradebook, useGradebookRoster } from "@/hooks/useGradebook";
 import { useSchedule } from "@/hooks/useSchedule";
 
 const chartPrimary = "hsl(var(--primary))";
@@ -51,13 +56,17 @@ const chartSuccess = "hsl(var(--success))";
 const chartMuted = "hsl(var(--muted-foreground))";
 
 export default function Dashboard() {
-  const { role, user } = useRole();
+  const { role } = useRole();
+  const { user } = useAuth();
   const { data: announcementItems = [] } = useAnnouncements();
   const { data: scheduleItems = [] } = useSchedule();
   const { data: gradeMap = {} } = useGradebook();
+  const { data: gradebookRoster = [] } = useGradebookRoster();
   const { data: academicCourses = [] } = useAcademicCourses();
   const { data: academicAssignments = [] } = useAcademicAssignments();
   const { data: studentRiskAlerts = [] } = useAcademicRiskAlerts();
+  const { data: transcriptRecords = [] } = useAcademicTranscript();
+  const { data: attendanceSummary } = useAttendanceSummary();
 
   const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
   const visibleSchedule = scheduleItems.filter(
@@ -68,9 +77,16 @@ export default function Dashboard() {
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
   const latestAnnouncements = announcementItems.slice(0, 3);
 
-  const classAverage = calculateClassAverage(gradeMap);
-  const studentAverages = calculateStudentAverages(gradeMap);
-  const currentStudentAverage = studentAverages[students[0]?.id] ?? Math.round(studentAcademicProfile.gpa * 25);
+  const classAverage = calculateClassAverage(gradeMap, gradebookRoster);
+  const studentAverages = calculateStudentAverages(gradeMap, gradebookRoster);
+  const currentStudentAverage = studentAverages[String(user?.id ?? "")] ?? 0;
+
+  const completedCredits = transcriptRecords.reduce((total, record) => total + record.credits, 0);
+  const weightedGpa = completedCredits
+    ? transcriptRecords.reduce((total, record) => total + record.gradePoint * record.credits, 0) / completedCredits
+    : 0;
+  const latestSemester = transcriptRecords[transcriptRecords.length - 1]?.semester ?? "Current term";
+
   const courseGradePerformance = academicCourses.length
     ? academicCourses.map((course) => ({
         course: course.code,
@@ -93,7 +109,7 @@ export default function Dashboard() {
         />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <StatCard label="Total students" value={students.length} hint="Across active classes" icon={Users} tone="primary" to="/attendance" />
+          <StatCard label="Total students" value={gradebookRoster.length} hint="Across active classes" icon={Users} tone="primary" to="/attendance" />
           <StatCard label="Active classes" value={academicCourses.length} hint="Current semester" icon={BookOpenCheck} tone="info" to="/courses" />
           <StatCard label="Average grade" value={`${classAverage || 84}%`} hint="Gradebook average" icon={Award} tone="success" to="/gradebook" />
           <StatCard label="Attendance rate" value="91%" hint="Class trend" icon={ClipboardCheck} tone="success" to="/attendance" />
@@ -168,17 +184,17 @@ export default function Dashboard() {
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Student profile</p>
-              <h2 className="font-display text-xl font-bold text-foreground">{studentAcademicProfile.name}</h2>
-              <p className="text-sm text-muted-foreground">{studentAcademicProfile.studentId}</p>
+              <h2 className="font-display text-xl font-bold text-foreground">{user?.name}</h2>
+              <p className="text-sm text-muted-foreground">{user?.studentId || user?.email}</p>
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <ProfileLine label="Faculty" value={studentAcademicProfile.faculty} />
-            <ProfileLine label="Major" value={studentAcademicProfile.major} />
-            <ProfileLine label="Semester" value={studentAcademicProfile.currentSemester} />
-            <ProfileLine label="Completed credits" value={studentAcademicProfile.completedCredits} />
-            <ProfileLine label="GPA" value={studentAcademicProfile.gpa.toFixed(2)} />
-            <ProfileLine label="Attendance" value={`${studentAcademicProfile.attendancePercentage}%`} />
+            <ProfileLine label="Email" value={user?.email ?? "-"} />
+            <ProfileLine label="Major" value={user?.major || "Not set"} />
+            <ProfileLine label="Semester" value={latestSemester} />
+            <ProfileLine label="Completed credits" value={completedCredits} />
+            <ProfileLine label="GPA" value={weightedGpa.toFixed(2)} />
+            <ProfileLine label="Enrolled classes" value={academicCourses.length} />
           </div>
         </Card>
 
@@ -188,7 +204,7 @@ export default function Dashboard() {
           <StatCard label="Recent grade" value={`${currentStudentAverage}%`} hint="From gradebook" icon={Award} tone="success" to="/gradebook" />
           <StatCard label="Announcements" value={announcementItems.length} hint="Latest notices" icon={Megaphone} tone="warning" to="/announcements" />
           <StatCard label="Notifications" value={platformNotifications.length} hint="Needs review" icon={Bell} tone="primary" to="/messages" />
-          <StatCard label="Attendance" value={`${studentAcademicProfile.attendancePercentage}%`} hint="This semester" icon={ClipboardCheck} tone="success" to="/attendance" />
+          <StatCard label="Attendance" value={`${attendanceSummary?.percentage ?? 0}%`} hint="This semester" icon={ClipboardCheck} tone="success" to="/attendance" />
         </div>
       </div>
 

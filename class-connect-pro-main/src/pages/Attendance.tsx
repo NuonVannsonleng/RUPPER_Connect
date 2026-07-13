@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { students as mockStudents } from "@/data/mockData";
 import { useRole } from "@/context/RoleContext";
 import { apiRequest } from "@/lib/api";
+import { useAttendanceSummary } from "@/hooks/useAttendanceSummary";
 
 type Status = "present" | "absent" | "late" | null;
 
@@ -71,6 +72,7 @@ const formatStudent = (student: ApiStudent): RosterStudent => ({
 
 export default function Attendance() {
   const { role } = useRole();
+  const { data: mySummary } = useAttendanceSummary();
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [roster, setRoster] = useState<RosterStudent[]>(mockRoster);
@@ -268,12 +270,12 @@ export default function Attendance() {
         </Card>
         <Card className="border-border/60 p-6 shadow-soft">
           <div className="grid gap-4 sm:grid-cols-3">
-            <SummaryTile label="Present" value="42 days" tone="success" />
-            <SummaryTile label="Absent" value="3 days" tone="destructive" />
-            <SummaryTile label="Late" value="2 days" tone="warning" />
+            <SummaryTile label="Present" value={`${mySummary?.present ?? 0} days`} tone="success" />
+            <SummaryTile label="Absent" value={`${mySummary?.absent ?? 0} days`} tone="destructive" />
+            <SummaryTile label="Late" value={`${mySummary?.late ?? 0} days`} tone="warning" />
           </div>
           <p className="mt-6 text-sm text-muted-foreground">
-            Detailed daily log will appear here once connected to the backend.
+            {mySummary?.total ? `${mySummary.percentage}% attendance across ${mySummary.total} recorded days.` : "No attendance has been recorded for you yet."}
           </p>
         </Card>
       </>

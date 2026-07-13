@@ -26,42 +26,34 @@ export const ACADEMIC_TRANSCRIPT_QUERY_KEY = ["academic", "transcript"] as const
 export const ACADEMIC_MESSAGES_QUERY_KEY = ["academic", "messages"] as const;
 export const ACADEMIC_RISK_ALERTS_QUERY_KEY = ["academic", "risk-alerts"] as const;
 
-const withFallback = <T,>(rows: T[], fallback: T[]) => (rows.length ? rows : fallback);
-
-export const fetchAcademicCourses = async () => {
-  const rows = await apiRequest<AcademicCourse[]>("/academic/courses");
-  return withFallback(rows, academicCourses);
+// Falls back to demo data only when the backend request itself fails (e.g. offline),
+// never when it succeeds with a legitimately empty list - otherwise a real empty
+// state (0 messages, 0 courses, ...) would be permanently masked by fake demo rows.
+const withFallback = async <T,>(fetcher: () => Promise<T[]>, fallback: T[]): Promise<T[]> => {
+  try {
+    return await fetcher();
+  } catch {
+    return fallback;
+  }
 };
 
-export const fetchAcademicAssignments = async () => {
-  const rows = await apiRequest<AcademicAssignment[]>("/academic/assignments");
-  return withFallback(rows, academicAssignments);
-};
+export const fetchAcademicCourses = () => withFallback(() => apiRequest<AcademicCourse[]>("/academic/courses"), academicCourses);
 
-export const fetchAcademicQuizzes = async () => {
-  const rows = await apiRequest<AcademicQuiz[]>("/academic/quizzes");
-  return withFallback(rows, academicQuizzes);
-};
+export const fetchAcademicAssignments = () =>
+  withFallback(() => apiRequest<AcademicAssignment[]>("/academic/assignments"), academicAssignments);
 
-export const fetchAcademicCalendar = async () => {
-  const rows = await apiRequest<AcademicCalendarEvent[]>("/academic/calendar");
-  return withFallback(rows, academicCalendarEvents);
-};
+export const fetchAcademicQuizzes = () => withFallback(() => apiRequest<AcademicQuiz[]>("/academic/quizzes"), academicQuizzes);
 
-export const fetchAcademicTranscript = async () => {
-  const rows = await apiRequest<TranscriptRecord[]>("/academic/transcript");
-  return withFallback(rows, transcriptRecords);
-};
+export const fetchAcademicCalendar = () =>
+  withFallback(() => apiRequest<AcademicCalendarEvent[]>("/academic/calendar"), academicCalendarEvents);
 
-export const fetchAcademicMessages = async () => {
-  const rows = await apiRequest<MessageThread[]>("/academic/messages");
-  return withFallback(rows, messageThreads);
-};
+export const fetchAcademicTranscript = () =>
+  withFallback(() => apiRequest<TranscriptRecord[]>("/academic/transcript"), transcriptRecords);
 
-export const fetchAcademicRiskAlerts = async () => {
-  const rows = await apiRequest<StudentAlert[]>("/academic/risk-alerts");
-  return withFallback(rows, studentRiskAlerts);
-};
+export const fetchAcademicMessages = () => withFallback(() => apiRequest<MessageThread[]>("/academic/messages"), messageThreads);
+
+export const fetchAcademicRiskAlerts = () =>
+  withFallback(() => apiRequest<StudentAlert[]>("/academic/risk-alerts"), studentRiskAlerts);
 
 export function useAcademicCourses() {
   return useQuery({

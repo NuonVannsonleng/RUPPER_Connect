@@ -11,6 +11,7 @@ export interface ApiAnnouncement {
   category?: string;
   createdAt?: string;
   author?: string;
+  isRead?: boolean;
 }
 
 const categories: Announcement["category"][] = ["exam", "event", "general", "urgent"];
@@ -39,6 +40,7 @@ export const formatAnnouncement = (item: ApiAnnouncement): Announcement => ({
   author: item.author || "Academic Office",
   date: formatDate(item.createdAt),
   category: isCategory(item.category) ? item.category : "general",
+  isRead: item.isRead ?? false,
 });
 
 const fetchAnnouncements = async () => {

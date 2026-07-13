@@ -7,10 +7,13 @@ import {
   Upload,
   Users,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
+import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -28,6 +31,7 @@ const statusTone = {
 
 export default function Courses() {
   const { role } = useRole();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: courses = [], isFetching } = useAcademicCourses();
   const isTeacher = role === "teacher";
@@ -88,10 +92,14 @@ export default function Courses() {
         }
       />
 
-      {isFetching && (
-        <div className="mb-4 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm text-muted-foreground">
-          Syncing course data with backend...
-        </div>
+      {isFetching && <SyncStatus label="course data" />}
+
+      {courses.length === 0 && !isFetching && (
+        <EmptyState
+          icon={BookOpenCheck}
+          title="No courses yet"
+          detail={isTeacher ? "Create your first course to get started." : "Enrolled courses will appear here."}
+        />
       )}
 
       <div className="grid gap-5">
@@ -150,17 +158,20 @@ export default function Courses() {
                   </TabsList>
 
                   <TabsContent value="materials" className="mt-4 space-y-3">
+                    {course.materials.length === 0 && (
+                      <p className="rounded-xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                        No materials uploaded yet.
+                      </p>
+                    )}
                     {course.materials.map((material) => (
                       <ActionRow key={material.id} icon={FileText} title={material.title} meta={`${material.type} - ${material.uploadedAt}`} />
                     ))}
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => (isTeacher ? uploadMaterial(course.id) : toast.success("Material opened."))}
-                    >
-                      {isTeacher ? <Upload className="mr-2 h-4 w-4" /> : <BookOpenCheck className="mr-2 h-4 w-4" />}
-                      {isTeacher ? "Upload material" : "Open materials"}
-                    </Button>
+                    {isTeacher && (
+                      <Button variant="outline" className="w-full" onClick={() => uploadMaterial(course.id)}>
+                        <Upload className="mr-2 h-4 w-4" />
+                        Upload material
+                      </Button>
+                    )}
                   </TabsContent>
 
                   <TabsContent value="assignments" className="mt-4 space-y-3">
@@ -172,7 +183,7 @@ export default function Courses() {
                         meta={`Due ${assignment.deadline} - ${assignment.submissionCount} submissions`}
                       />
                     ))}
-                    <Button variant="outline" className="w-full" onClick={() => toast.info(isTeacher ? "Assignment builder prepared." : "Submission workspace prepared.")}>
+                    <Button variant="outline" className="w-full" onClick={() => navigate("/assignments")}>
                       {isTeacher ? "Create assignment" : "Submit assignment"}
                     </Button>
                   </TabsContent>
@@ -182,10 +193,10 @@ export default function Courses() {
                       <ActionRow key={quiz.id} icon={BookOpenCheck} title={quiz.title} meta={`${quiz.questions} questions - ${quiz.timeLimit} minutes`} />
                     ))}
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <Button variant="outline" onClick={() => toast.info(isTeacher ? "Quiz editor prepared." : "Quiz player prepared.")}>
+                      <Button variant="outline" onClick={() => navigate("/quizzes")}>
                         {isTeacher ? "Manage quizzes" : "Take quiz"}
                       </Button>
-                      <Button variant="ghost" onClick={() => toast.info("Discussion channel prepared.")}>
+                      <Button variant="ghost" onClick={() => navigate("/messages")}>
                         <MessageSquare className="mr-2 h-4 w-4" />
                         Discussion
                       </Button>
@@ -194,7 +205,7 @@ export default function Courses() {
                 </Tabs>
 
                 {isTeacher && (
-                  <Button className="mt-4 w-full bg-gradient-primary text-primary-foreground" onClick={() => toast.info("Student progress view prepared.")}>
+                  <Button className="mt-4 w-full bg-gradient-primary text-primary-foreground" onClick={() => navigate("/gradebook")}>
                     <Users className="mr-2 h-4 w-4" />
                     View student progress
                   </Button>

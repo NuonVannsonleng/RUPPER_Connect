@@ -3,6 +3,7 @@ import { toast } from "sonner";
 
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
+import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -13,10 +14,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { studentAcademicProfile } from "@/data/academicPlatform";
+import { useAuth } from "@/context/AuthContext";
 import { useAcademicTranscript } from "@/hooks/useAcademicPlatform";
 
 export default function Transcript() {
+  const { user } = useAuth();
   const { data: transcriptRecords = [], isFetching } = useAcademicTranscript();
   const credits = transcriptRecords.reduce((total, record) => total + record.credits, 0);
   const weightedGpa = credits
@@ -43,23 +45,19 @@ export default function Transcript() {
       />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Overall GPA" value={studentAcademicProfile.gpa.toFixed(2)} hint="Current record" icon={Star} tone="primary" />
-        <StatCard label="Calculated GPA" value={weightedGpa.toFixed(2)} hint="From transcript" icon={GraduationCap} tone="success" />
+        <StatCard label="Overall GPA" value={weightedGpa.toFixed(2)} hint="Weighted by credits" icon={Star} tone="primary" />
+        <StatCard label="Courses recorded" value={transcriptRecords.length} hint="On this transcript" icon={GraduationCap} tone="success" />
         <StatCard label="Completed credits" value={credits} hint="Recorded courses" icon={ScrollText} tone="info" />
         <StatCard label="Export" value="PDF" hint="Printable transcript" icon={Printer} tone="warning" />
       </div>
 
-      {isFetching && (
-        <div className="mb-4 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm text-muted-foreground">
-          Syncing transcript with backend...
-        </div>
-      )}
+      {isFetching && <SyncStatus label="the transcript" />}
 
       <Card className="overflow-hidden border-border/60 shadow-soft">
         <div className="border-b border-border bg-secondary/40 px-5 py-4">
-          <h2 className="font-display text-lg font-bold text-foreground">{studentAcademicProfile.name}</h2>
+          <h2 className="font-display text-lg font-bold text-foreground">{user?.name}</h2>
           <p className="text-sm text-muted-foreground">
-            {studentAcademicProfile.studentId} - {studentAcademicProfile.major}
+            {user?.studentId || user?.email} {user?.major ? `- ${user.major}` : ""}
           </p>
         </div>
 
@@ -74,6 +72,13 @@ export default function Transcript() {
             </TableRow>
           </TableHeader>
           <TableBody>
+            {transcriptRecords.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                  No transcript records yet.
+                </TableCell>
+              </TableRow>
+            )}
             {transcriptRecords.map((record) => (
               <TableRow key={record.id}>
                 <TableCell className="font-medium">{record.semester}</TableCell>

@@ -547,6 +547,33 @@ exports.submitAssignment = async (req, res) => {
   res.status(201).json({ message: "Assignment submitted" });
 };
 
+exports.getAssignmentSubmissions = async (req, res) => {
+  await ensureAcademicSchema();
+  const [rows] = await pool.query(
+    `SELECT s.id, s.student_id AS studentId, u.name AS studentName, u.email AS studentEmail,
+      s.file_url AS fileUrl, s.status, s.score, s.feedback, s.submitted_at AS submittedAt
+     FROM assignment_submissions s
+     JOIN users u ON u.id = s.student_id
+     WHERE s.assignment_id = ?
+     ORDER BY s.submitted_at DESC`,
+    [req.params.id]
+  );
+
+  res.json(
+    rows.map((row) => ({
+      id: String(row.id),
+      studentId: String(row.studentId),
+      studentName: row.studentName,
+      studentEmail: row.studentEmail,
+      fileUrl: row.fileUrl || undefined,
+      status: row.status,
+      score: row.score === null ? undefined : Number(row.score),
+      feedback: row.feedback || undefined,
+      submittedAt: row.submittedAt ? dateOnly(row.submittedAt) : undefined,
+    }))
+  );
+};
+
 exports.gradeSubmission = async (req, res) => {
   await ensureAcademicSchema();
   const { score, feedback } = req.body;

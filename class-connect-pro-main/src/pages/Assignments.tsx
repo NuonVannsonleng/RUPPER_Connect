@@ -1,20 +1,39 @@
-import { CheckCircle2, Clock, FileUp, MessageSquareText, Plus, Star, XCircle } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, Clock, FileUp, Loader2, MessageSquareText, Plus, Star, XCircle } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
+import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 import { useRole } from "@/context/RoleContext";
+import type { AcademicAssignment } from "@/data/academicPlatform";
 import {
   ACADEMIC_ASSIGNMENTS_QUERY_KEY,
   useAcademicAssignments,
   useAcademicCourses,
 } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
+
+interface AssignmentSubmission {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentEmail?: string;
+  fileUrl?: string;
+  status: string;
+  score?: number;
+  feedback?: string;
+  submittedAt?: string;
+}
 
 const assignmentTone = {
   submitted: "bg-success/10 text-success border-success/20",
@@ -29,6 +48,10 @@ export default function Assignments() {
   const queryClient = useQueryClient();
   const { data: assignments = [], isFetching } = useAcademicAssignments();
   const { data: courses = [] } = useAcademicCourses();
+  const [reviewingAssignment, setReviewingAssignment] = useState<AcademicAssignment | null>(null);
+  const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([]);
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
+  const [savingSubmissionId, setSavingSubmissionId] = useState<string | null>(null);
   const isTeacher = role === "teacher";
   const pending = assignments.filter((item) => item.status === "pending").length;
   const submitted = assignments.filter((item) => item.status === "submitted" || item.status === "graded").length;
@@ -75,6 +98,41 @@ export default function Assignments() {
     }
   };
 
+  const openReview = async (assignment: AcademicAssignment) => {
+    setReviewingAssignment(assignment);
+    setLoadingSubmissions(true);
+    try {
+      const rows = await apiRequest<AssignmentSubmission[]>(`/academic/assignments/${assignment.id}/submissions`);
+      setSubmissions(rows);
+    } catch {
+      setSubmissions([]);
+      toast.error("Could not load submissions for this assignment");
+    } finally {
+      setLoadingSubmissions(false);
+    }
+  };
+
+  const updateSubmissionDraft = (submissionId: string, updates: Partial<AssignmentSubmission>) => {
+    setSubmissions((current) => current.map((row) => (row.id === submissionId ? { ...row, ...updates } : row)));
+  };
+
+  const saveSubmissionGrade = async (submission: AssignmentSubmission) => {
+    setSavingSubmissionId(submission.id);
+    try {
+      await apiRequest<{ message: string }>(`/academic/assignment-submissions/${submission.id}/grade`, {
+        method: "PUT",
+        body: JSON.stringify({ score: submission.score ?? 0, feedback: submission.feedback || "" }),
+      });
+      updateSubmissionDraft(submission.id, { status: "graded" });
+      await refreshAssignments();
+      toast.success(`Grade saved for ${submission.studentName}`);
+    } catch {
+      toast.error("Could not save this grade");
+    } finally {
+      setSavingSubmissionId(null);
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -95,11 +153,7 @@ export default function Assignments() {
         }
       />
 
-      {isFetching && (
-        <div className="mb-4 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm text-muted-foreground">
-          Syncing assignments with backend...
-        </div>
-      )}
+      {isFetching && <SyncStatus label="assignments" />}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label={isTeacher ? "Submissions" : "Submitted"} value={submitted} hint="Ready for review" icon={CheckCircle2} tone="success" />
@@ -108,12 +162,19 @@ export default function Assignments() {
         <StatCard label="Completion" value={`${completion}%`} hint="Across assignments" icon={Star} tone="primary" />
       </div>
 
+      {assignments.length === 0 && !isFetching && (
+        <EmptyState icon={CheckCircle2} title="No assignments yet" detail="Created assignments will appear here." />
+      )}
+
       <div className="grid gap-4">
         {assignments.map((assignment) => {
           const progress = Math.min(100, Math.round((assignment.submissionCount / 32) * 100));
 
           return (
-            <Card key={assignment.id} className="border-border/60 p-5 shadow-soft sm:p-6">
+            <Card
+              key={assignment.id}
+              className="border-border/60 p-5 shadow-soft transition-base hover:-translate-y-0.5 hover:shadow-elegant sm:p-6"
+            >
               <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -145,7 +206,7 @@ export default function Assignments() {
                     <MiniMetric label="Submitted" value={assignment.submissionCount} />
                     <MiniMetric label="Score" value={assignment.score ? `${assignment.score}/${assignment.maxScore}` : "Pending"} />
                   </div>
-                  <Button className="mt-4 w-full bg-gradient-primary text-primary-foreground" onClick={() => (isTeacher ? toast.success("Review queue opened.") : submitAssignment(assignment.id))}>
+                  <Button className="mt-4 w-full bg-gradient-primary text-primary-foreground" onClick={() => (isTeacher ? openReview(assignment) : submitAssignment(assignment.id))}>
                     <FileUp className="mr-2 h-4 w-4" />
                     {isTeacher ? "Review submissions" : "Submit file"}
                   </Button>
@@ -155,6 +216,68 @@ export default function Assignments() {
           );
         })}
       </div>
+
+      <Dialog open={Boolean(reviewingAssignment)} onOpenChange={(open) => !open && setReviewingAssignment(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{reviewingAssignment?.title} - submissions</DialogTitle>
+          </DialogHeader>
+
+          {loadingSubmissions ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading submissions...
+            </div>
+          ) : submissions.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">No students have submitted this assignment yet.</p>
+          ) : (
+            <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+              {submissions.map((submission) => (
+                <div key={submission.id} className="rounded-xl border border-border/70 bg-secondary/20 p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-foreground">{submission.studentName}</p>
+                      <p className="text-xs text-muted-foreground">{submission.studentEmail}</p>
+                    </div>
+                    <Badge className={`border ${assignmentTone[submission.status as keyof typeof assignmentTone] || ""}`}>
+                      {submission.status}
+                    </Badge>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[120px_1fr]">
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Score</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={reviewingAssignment?.maxScore ?? 100}
+                        value={submission.score ?? ""}
+                        onChange={(e) => updateSubmissionDraft(submission.id, { score: Number(e.target.value) })}
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Feedback</label>
+                      <Textarea
+                        value={submission.feedback ?? ""}
+                        onChange={(e) => updateSubmissionDraft(submission.id, { feedback: e.target.value })}
+                        className="mt-1 min-h-[4.5rem]"
+                        placeholder="Leave feedback for this student..."
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="mt-3 bg-gradient-primary text-primary-foreground"
+                    disabled={savingSubmissionId === submission.id}
+                    onClick={() => saveSubmissionGrade(submission)}
+                  >
+                    {savingSubmissionId === submission.id ? "Saving..." : "Save grade"}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -80,6 +80,13 @@ export default function Announcements() {
 
   useEffect(() => {
     setItems(loadedItems);
+    setReadIds((current) => {
+      const next = new Set(current);
+      loadedItems.forEach((item) => {
+        if (item.isRead) next.add(String(item.id));
+      });
+      return next;
+    });
   }, [loadedItems]);
 
   useEffect(() => {
@@ -167,13 +174,19 @@ export default function Announcements() {
 
   const unreadCount = items.filter((item) => !readIds.has(String(item.id))).length;
   const urgentCount = items.filter((item) => getPriority(item.category) === "urgent").length;
-  const markRead = (item: Announcement) => {
-    setReadIds((current) => {
-      const next = new Set(current);
-      next.add(String(item.id));
-      return next;
-    });
-    toast.success("Marked as read");
+  const markRead = async (item: Announcement) => {
+    setReadIds((current) => new Set(current).add(String(item.id)));
+    try {
+      await apiRequest<{ message: string }>(`/announcements/${item.id}/read`, { method: "PUT" });
+      toast.success("Marked as read");
+    } catch {
+      setReadIds((current) => {
+        const next = new Set(current);
+        next.delete(String(item.id));
+        return next;
+      });
+      toast.error("Could not save read status");
+    }
   };
 
   return (

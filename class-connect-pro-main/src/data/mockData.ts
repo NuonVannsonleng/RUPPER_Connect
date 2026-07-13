@@ -41,6 +41,7 @@ export interface Announcement {
   author: string;
   date: string;
   category: "exam" | "event" | "general" | "urgent";
+  isRead?: boolean;
 }
 
 export const students: Student[] = [

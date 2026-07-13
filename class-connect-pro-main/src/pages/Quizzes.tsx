@@ -1,13 +1,18 @@
+import { useState } from "react";
 import { Brain, CheckCircle2, Clock3, HelpCircle, ListChecks, Plus, Trophy } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
+import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useRole } from "@/context/RoleContext";
+import type { AcademicQuiz } from "@/data/academicPlatform";
 import {
   ACADEMIC_QUIZZES_QUERY_KEY,
   useAcademicCourses,
@@ -26,6 +31,7 @@ export default function Quizzes() {
   const queryClient = useQueryClient();
   const { data: quizzes = [], isFetching } = useAcademicQuizzes();
   const { data: courses = [] } = useAcademicCourses();
+  const [viewingQuiz, setViewingQuiz] = useState<AcademicQuiz | null>(null);
   const isTeacher = role === "teacher";
   const available = quizzes.filter((quiz) => quiz.status === "available").length;
   const completed = quizzes.filter((quiz) => quiz.status === "completed").length;
@@ -91,11 +97,7 @@ export default function Quizzes() {
         }
       />
 
-      {isFetching && (
-        <div className="mb-4 rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm text-muted-foreground">
-          Syncing quizzes with backend...
-        </div>
-      )}
+      {isFetching && <SyncStatus label="quizzes" />}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Available" value={available} hint="Ready to take" icon={Brain} tone="success" />
@@ -104,9 +106,16 @@ export default function Quizzes() {
         <StatCard label="Auto grading" value="On" hint="MCQ and true/false" icon={ListChecks} tone="warning" />
       </div>
 
+      {quizzes.length === 0 && !isFetching && (
+        <EmptyState icon={Brain} title="No quizzes yet" detail="Quizzes and exams will appear here once created." />
+      )}
+
       <div className="grid gap-4 lg:grid-cols-3">
         {quizzes.map((quiz) => (
-          <Card key={quiz.id} className="flex min-h-[320px] flex-col border-border/60 p-5 shadow-soft">
+          <Card
+            key={quiz.id}
+            className="flex min-h-[320px] flex-col border-border/60 p-5 shadow-soft transition-base hover:-translate-y-0.5 hover:shadow-elegant"
+          >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <Badge variant="outline">{quiz.courseCode}</Badge>
@@ -130,12 +139,50 @@ export default function Quizzes() {
               ))}
             </div>
 
-            <Button className="mt-auto w-full bg-gradient-primary text-primary-foreground" onClick={() => (isTeacher ? toast.success("Quiz editor opened.") : submitQuiz(quiz.id))}>
-              {isTeacher ? "Edit quiz" : quiz.status === "completed" ? "View results" : "Take quiz"}
+            <Button className="mt-auto w-full bg-gradient-primary text-primary-foreground" onClick={() => (isTeacher ? setViewingQuiz(quiz) : submitQuiz(quiz.id))}>
+              {isTeacher ? "View results" : quiz.status === "completed" ? "View results" : "Take quiz"}
             </Button>
           </Card>
         ))}
       </div>
+
+      <Dialog open={Boolean(viewingQuiz)} onOpenChange={(open) => !open && setViewingQuiz(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{viewingQuiz?.title}</DialogTitle>
+          </DialogHeader>
+          {viewingQuiz && (
+            <div className="space-y-3 pt-2 text-sm">
+              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
+                <span className="text-muted-foreground">Course</span>
+                <span className="font-semibold text-foreground">{viewingQuiz.courseCode}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
+                <span className="text-muted-foreground">Status</span>
+                <Badge className={`border ${statusTone[viewingQuiz.status]}`}>{viewingQuiz.status}</Badge>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
+                <span className="text-muted-foreground">Questions</span>
+                <span className="font-semibold text-foreground">{viewingQuiz.questions}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
+                <span className="text-muted-foreground">Time limit</span>
+                <span className="font-semibold text-foreground">{viewingQuiz.timeLimit} min</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
+                <span className="text-muted-foreground">Class average</span>
+                <span className="font-semibold text-foreground">
+                  {viewingQuiz.averageScore ? `${viewingQuiz.averageScore}/${viewingQuiz.questions}` : "No attempts yet"}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Editing quiz questions from the dashboard isn't available yet - question sets can be updated directly
+                on the backend for now.
+              </p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
