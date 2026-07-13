@@ -7,6 +7,7 @@ const c = require("../controllers/academicController");
 router.get("/courses", auth, asyncHandler(c.getCourses));
 router.post("/courses", auth, requireTeacher, asyncHandler(c.createCourse));
 router.post("/courses/:courseId/materials", auth, requireTeacher, asyncHandler(c.createMaterial));
+router.get("/materials/:id/download", auth, asyncHandler(c.downloadMaterial));
 
 router.get("/assignments", auth, asyncHandler(c.getAssignments));
 router.post("/assignments", auth, requireTeacher, asyncHandler(c.createAssignment));
@@ -24,6 +25,7 @@ router.post("/calendar", auth, requireTeacher, asyncHandler(c.createCalendarEven
 router.get("/transcript", auth, asyncHandler(c.getTranscript));
 router.get("/risk-alerts", auth, asyncHandler(c.getRiskAlerts));
 
+router.get("/contacts", auth, asyncHandler(c.getContacts));
 router.get("/messages", auth, asyncHandler(c.getMessages));
 router.post("/messages", auth, asyncHandler(c.createMessage));
 router.put("/messages/:id/read", auth, asyncHandler(c.markMessageRead));

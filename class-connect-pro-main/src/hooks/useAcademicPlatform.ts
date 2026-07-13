@@ -25,6 +25,14 @@ export const ACADEMIC_CALENDAR_QUERY_KEY = ["academic", "calendar"] as const;
 export const ACADEMIC_TRANSCRIPT_QUERY_KEY = ["academic", "transcript"] as const;
 export const ACADEMIC_MESSAGES_QUERY_KEY = ["academic", "messages"] as const;
 export const ACADEMIC_RISK_ALERTS_QUERY_KEY = ["academic", "risk-alerts"] as const;
+export const ACADEMIC_CONTACTS_QUERY_KEY = ["academic", "contacts"] as const;
+
+export interface AcademicContact {
+  id: string;
+  name: string;
+  email: string;
+  role: "teacher" | "student";
+}
 
 // Falls back to demo data only when the backend request itself fails (e.g. offline),
 // never when it succeeds with a legitimately empty list - otherwise a real empty
@@ -108,5 +116,13 @@ export function useAcademicRiskAlerts() {
     queryKey: ACADEMIC_RISK_ALERTS_QUERY_KEY,
     queryFn: fetchAcademicRiskAlerts,
     initialData: studentRiskAlerts,
+  });
+}
+
+export function useAcademicContacts() {
+  return useQuery({
+    queryKey: ACADEMIC_CONTACTS_QUERY_KEY,
+    queryFn: () => apiRequest<AcademicContact[]>("/academic/contacts"),
+    initialData: [],
   });
 }

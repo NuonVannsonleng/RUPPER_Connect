@@ -24,6 +24,11 @@ function getConnection() {
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
+        // Without this, mysql2 converts DATE/DATETIME columns to JS Date objects using the
+        // server's local timezone, then formatting helpers convert back to UTC - a plain DATE
+        // like '2026-09-15' can silently shift to '2026-09-14' depending on the server's offset.
+        // Returning raw strings avoids that conversion entirely.
+        dateStrings: true,
       });
 
       console.log("MySQL connection pool created successfully.");

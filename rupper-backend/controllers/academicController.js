@@ -18,9 +18,14 @@ const materialTypeToUi = (value = "file") => {
 
 const dateOnly = (value) => {
   if (!value) return "";
+  // mysql2 (with dateStrings: true) returns DATE/DATETIME as raw 'YYYY-MM-DD[ HH:MM:SS]'
+  // strings - take the date portion directly rather than round-tripping through a JS Date,
+  // which would reinterpret it in the server's local timezone and can shift it by a day.
+  const str = String(value);
+  const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
-  return date.toISOString().slice(0, 10);
+  return Number.isNaN(date.getTime()) ? str.slice(0, 10) : date.toISOString().slice(0, 10);
 };
 
 const shortDate = (value) => {
@@ -44,6 +49,22 @@ const timeAgo = (value) => {
 };
 
 const ensureAcademicSchema = async () => {
+  if (schemaReady) return;
+
+  // Parallel first requests (courses, assignments, quizzes, calendar all fire together on
+  // page load) would otherwise race here too - the ALTER TABLE below isn't safe to run
+  // concurrently like the CREATE TABLE IF NOT EXISTS statements are.
+  const [[lockRow]] = await pool.query("SELECT GET_LOCK('rupper_academic_schema', 15) AS locked");
+  if (!lockRow.locked) return;
+
+  try {
+    await ensureAcademicSchemaLocked();
+  } finally {
+    await pool.query("SELECT RELEASE_LOCK('rupper_academic_schema')");
+  }
+};
+
+const ensureAcademicSchemaLocked = async () => {
   if (schemaReady) return;
 
   const statements = [
@@ -207,6 +228,25 @@ const ensureAcademicSchema = async () => {
 
   for (const statement of statements) {
     await pool.query(statement);
+  }
+
+  // course_materials already existed in production before file uploads were supported, so
+  // CREATE TABLE IF NOT EXISTS above won't add these columns to it - do that separately.
+  // MySQL (unlike MariaDB) has no ADD COLUMN IF NOT EXISTS, so check information_schema first.
+  const materialColumns = {
+    file_name: "VARCHAR(255) NULL",
+    file_mime: "VARCHAR(150) NULL",
+    file_data: "LONGBLOB NULL",
+    file_size: "INT NULL",
+  };
+  const [existingColumns] = await pool.query(
+    "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'course_materials'"
+  );
+  const existingNames = new Set(existingColumns.map((row) => row.COLUMN_NAME));
+  const missing = Object.entries(materialColumns).filter(([name]) => !existingNames.has(name));
+  if (missing.length) {
+    const clauses = missing.map(([name, definition]) => `ADD COLUMN ${name} ${definition}`).join(", ");
+    await pool.query(`ALTER TABLE course_materials ${clauses}`);
   }
 
   schemaReady = true;
@@ -379,7 +419,11 @@ exports.getCourses = async (req, res) => {
   const ids = courses.map((course) => course.id);
   if (!ids.length) return res.json([]);
 
-  const [materials] = await pool.query("SELECT * FROM course_materials WHERE course_id IN (?) ORDER BY created_at DESC", [ids]);
+  const [materials] = await pool.query(
+    `SELECT id, course_id, title, material_type, file_url, file_name, file_size, created_at
+     FROM course_materials WHERE course_id IN (?) ORDER BY created_at DESC`,
+    [ids]
+  );
   const [assignments] = await pool.query("SELECT * FROM course_assignments WHERE course_id IN (?) ORDER BY deadline", [ids]);
   const [quizzes] = await pool.query("SELECT * FROM quizzes WHERE course_id IN (?) ORDER BY created_at DESC", [ids]);
   const [metrics] = await pool.query(
@@ -391,7 +435,16 @@ exports.getCourses = async (req, res) => {
   const materialMap = new Map();
   materials.forEach((item) => {
     const list = materialMap.get(item.course_id) || [];
-    list.push({ id: String(item.id), title: item.title, type: materialTypeToUi(item.material_type), uploadedAt: shortDate(item.created_at) });
+    list.push({
+      id: String(item.id),
+      title: item.title,
+      type: materialTypeToUi(item.material_type),
+      uploadedAt: shortDate(item.created_at),
+      fileName: item.file_name || undefined,
+      fileSize: item.file_size || undefined,
+      fileUrl: item.material_type === "link" ? item.file_url || undefined : undefined,
+      downloadUrl: item.file_name ? `/academic/materials/${item.id}/download` : undefined,
+    });
     materialMap.set(item.course_id, list);
   });
 
@@ -464,38 +517,81 @@ exports.createCourse = async (req, res) => {
   const { code, title, faculty, department, credits, semester, room, schedule, description } = req.body;
   if (!code || !title) return res.status(400).json({ message: "code and title are required" });
 
-  const [result] = await pool.query(
-    `INSERT INTO courses (code, title, faculty, department, lecturer_id, credits, semester, room, schedule_label, description)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      code.trim().toUpperCase(),
-      title.trim(),
-      faculty || null,
-      department || null,
-      req.user.id,
-      credits || 3,
-      semester || null,
-      room || null,
-      schedule || null,
-      description || null,
-    ]
-  );
+  let result;
+  try {
+    [result] = await pool.query(
+      `INSERT INTO courses (code, title, faculty, department, lecturer_id, credits, semester, room, schedule_label, description)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        code.trim().toUpperCase(),
+        title.trim(),
+        faculty || null,
+        department || null,
+        req.user.id,
+        credits || 3,
+        semester || null,
+        room || null,
+        schedule || null,
+        description || null,
+      ]
+    );
+  } catch (error) {
+    if (error.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: `A course with code "${code.trim().toUpperCase()}" already exists.` });
+    }
+    throw error;
+  }
 
   res.status(201).json({ id: String(result.insertId), message: "Course created" });
 };
 
+const MAX_MATERIAL_BYTES = 8 * 1024 * 1024; // 8MB, stored directly in the database
+
 exports.createMaterial = async (req, res) => {
   await ensureAcademicSchema();
   const courseId = await resolveCourseId(req.params.courseId);
-  const { title, type, fileUrl } = req.body;
+  const { title, type, fileUrl, fileName, fileMime, fileData } = req.body;
   if (!courseId || !title) return res.status(400).json({ message: "courseId and title are required" });
 
+  let buffer = null;
+  if (fileData) {
+    buffer = Buffer.from(fileData, "base64");
+    if (buffer.length > MAX_MATERIAL_BYTES) {
+      return res.status(413).json({ message: "File is too large. Maximum size is 8MB." });
+    }
+  }
+
   const [result] = await pool.query(
-    "INSERT INTO course_materials (course_id, title, material_type, file_url, created_by) VALUES (?, ?, ?, ?, ?)",
-    [courseId, title.trim(), materialTypeToDb(type), fileUrl || null, req.user.id]
+    `INSERT INTO course_materials
+      (course_id, title, material_type, file_url, file_name, file_mime, file_data, file_size, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      courseId,
+      title.trim(),
+      materialTypeToDb(type),
+      buffer ? null : fileUrl || null,
+      buffer ? fileName || title.trim() : null,
+      buffer ? fileMime || "application/octet-stream" : null,
+      buffer,
+      buffer ? buffer.length : null,
+      req.user.id,
+    ]
   );
 
   res.status(201).json({ id: String(result.insertId), message: "Material uploaded" });
+};
+
+exports.downloadMaterial = async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT title, file_name, file_mime, file_data FROM course_materials WHERE id = ?",
+    [req.params.id]
+  );
+  const material = rows[0];
+  if (!material || !material.file_data) return res.status(404).json({ message: "File not found" });
+
+  res.setHeader("Content-Type", material.file_mime || "application/octet-stream");
+  res.setHeader("Content-Disposition", `attachment; filename="${(material.file_name || material.title).replace(/"/g, "")}"`);
+  res.send(material.file_data);
 };
 
 exports.getAssignments = async (req, res) => {
@@ -789,6 +885,15 @@ exports.getRiskAlerts = async (req, res) => {
   }
 
   res.json(alerts);
+};
+
+exports.getContacts = async (req, res) => {
+  const oppositeRole = req.user.role === "teacher" ? "student" : "teacher";
+  const [rows] = await pool.query(
+    "SELECT id, name, email, role FROM users WHERE role = ? AND id <> ? ORDER BY name",
+    [oppositeRole, req.user.id]
+  );
+  res.json(rows.map((row) => ({ id: String(row.id), name: row.name, email: row.email, role: row.role })));
 };
 
 exports.getMessages = async (req, res) => {

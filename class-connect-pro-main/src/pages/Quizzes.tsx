@@ -10,7 +10,11 @@ import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { useRole } from "@/context/RoleContext";
 import type { AcademicQuiz } from "@/data/academicPlatform";
 import {
@@ -32,6 +36,9 @@ export default function Quizzes() {
   const { data: quizzes = [], isFetching } = useAcademicQuizzes();
   const { data: courses = [] } = useAcademicCourses();
   const [viewingQuiz, setViewingQuiz] = useState<AcademicQuiz | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [newQuiz, setNewQuiz] = useState({ courseId: "", title: "", description: "", timeLimit: "20", status: "available" });
+  const [isCreatingQuiz, setIsCreatingQuiz] = useState(false);
   const isTeacher = role === "teacher";
   const available = quizzes.filter((quiz) => quiz.status === "available").length;
   const completed = quizzes.filter((quiz) => quiz.status === "completed").length;
@@ -39,28 +46,40 @@ export default function Quizzes() {
 
   const refreshQuizzes = () => queryClient.invalidateQueries({ queryKey: ACADEMIC_QUIZZES_QUERY_KEY });
 
-  const createQuiz = async () => {
-    const firstCourse = courses[0];
-    if (!firstCourse) {
+  const openCreateDialog = () => {
+    if (!courses.length) {
       toast.error("Create a course first.");
       return;
     }
+    setNewQuiz({ courseId: courses[0].id, title: "", description: "", timeLimit: "20", status: "available" });
+    setCreateDialogOpen(true);
+  };
 
+  const createQuiz = async () => {
+    if (!newQuiz.courseId || !newQuiz.title.trim()) {
+      toast.error("Course and title are required.");
+      return;
+    }
+
+    setIsCreatingQuiz(true);
     try {
       await apiRequest<{ message: string }>("/academic/quizzes", {
         method: "POST",
         body: JSON.stringify({
-          courseId: firstCourse.id,
-          title: "New backend quiz",
-          description: "Auto-graded quiz created from RUPPER Connect.",
-          timeLimit: 20,
-          status: "available",
+          courseId: newQuiz.courseId,
+          title: newQuiz.title.trim(),
+          description: newQuiz.description.trim(),
+          timeLimit: Number(newQuiz.timeLimit) || 20,
+          status: newQuiz.status,
         }),
       });
       await refreshQuizzes();
-      toast.success("Quiz created in backend");
-    } catch {
-      toast.error("Could not create quiz");
+      toast.success("Quiz created");
+      setCreateDialogOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create quiz");
+    } finally {
+      setIsCreatingQuiz(false);
     }
   };
 
@@ -89,7 +108,7 @@ export default function Quizzes() {
         }
         actions={
           isTeacher ? (
-            <Button size="sm" variant="secondary" className="font-semibold" onClick={createQuiz}>
+            <Button size="sm" variant="secondary" className="font-semibold" onClick={openCreateDialog}>
               <Plus className="mr-2 h-4 w-4" />
               New quiz
             </Button>
@@ -145,6 +164,86 @@ export default function Quizzes() {
           </Card>
         ))}
       </div>
+
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create quiz</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <Label>Course</Label>
+              <Select value={newQuiz.courseId} onValueChange={(value) => setNewQuiz((f) => ({ ...f, courseId: value }))}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Choose a course" />
+                </SelectTrigger>
+                <SelectContent>
+                  {courses.map((course) => (
+                    <SelectItem key={course.id} value={course.id}>
+                      {course.code} - {course.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="quiz-title">Title</Label>
+              <Input
+                id="quiz-title"
+                value={newQuiz.title}
+                onChange={(e) => setNewQuiz((f) => ({ ...f, title: e.target.value }))}
+                placeholder="Chapter 4 Check"
+              />
+            </div>
+            <div>
+              <Label htmlFor="quiz-description">Description</Label>
+              <Textarea
+                id="quiz-description"
+                value={newQuiz.description}
+                onChange={(e) => setNewQuiz((f) => ({ ...f, description: e.target.value }))}
+                placeholder="What does this quiz cover?"
+                className="min-h-[5rem]"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="quiz-time-limit">Time limit (minutes)</Label>
+                <Input
+                  id="quiz-time-limit"
+                  type="number"
+                  min={1}
+                  value={newQuiz.timeLimit}
+                  onChange={(e) => setNewQuiz((f) => ({ ...f, timeLimit: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label>Status</Label>
+                <Select value={newQuiz.status} onValueChange={(value) => setNewQuiz((f) => ({ ...f, status: value }))}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="available">Available</SelectItem>
+                    <SelectItem value="draft">Draft</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A sample MCQ and true/false question are added automatically - editing question sets isn't available
+              from the dashboard yet.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCreateDialogOpen(false)} disabled={isCreatingQuiz}>
+              Cancel
+            </Button>
+            <Button onClick={createQuiz} className="bg-gradient-primary text-primary-foreground" disabled={isCreatingQuiz}>
+              {isCreatingQuiz ? "Creating..." : "Create quiz"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(viewingQuiz)} onOpenChange={(open) => !open && setViewingQuiz(null)}>
         <DialogContent>

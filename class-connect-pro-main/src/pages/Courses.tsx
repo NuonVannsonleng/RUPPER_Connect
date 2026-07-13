@@ -1,7 +1,11 @@
+import { useState } from "react";
 import {
   BookOpenCheck,
   ClipboardCheck,
+  Download,
   FileText,
+  Link as LinkIcon,
+  Loader2,
   MessageSquare,
   Plus,
   Upload,
@@ -17,16 +21,52 @@ import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRole } from "@/context/RoleContext";
+import type { AcademicMaterial } from "@/data/academicPlatform";
 import { ACADEMIC_COURSES_QUERY_KEY, useAcademicCourses } from "@/hooks/useAcademicPlatform";
-import { apiRequest } from "@/lib/api";
+import { apiRequest, buildApiUrl, getToken } from "@/lib/api";
 
 const statusTone = {
   active: "bg-success/10 text-success border-success/20",
   completed: "bg-primary/10 text-primary border-primary/20",
   "at-risk": "bg-destructive/10 text-destructive border-destructive/20",
+};
+
+const MAX_MATERIAL_BYTES = 8 * 1024 * 1024;
+
+const emptyCourseForm = {
+  code: "",
+  title: "",
+  faculty: "",
+  department: "",
+  credits: "3",
+  semester: "",
+  room: "",
+  schedule: "",
+  description: "",
+};
+
+const readFileAsBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+const formatBytes = (bytes?: number) => {
+  if (!bytes) return "";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 export default function Courses() {
@@ -36,39 +76,96 @@ export default function Courses() {
   const { data: courses = [], isFetching } = useAcademicCourses();
   const isTeacher = role === "teacher";
 
-  const createCourse = async () => {
+  const [courseDialogOpen, setCourseDialogOpen] = useState(false);
+  const [courseForm, setCourseForm] = useState(emptyCourseForm);
+  const [isCreatingCourse, setIsCreatingCourse] = useState(false);
+
+  const [materialCourseId, setMaterialCourseId] = useState<string | null>(null);
+  const [materialTitle, setMaterialTitle] = useState("");
+  const [materialType, setMaterialType] = useState<"PDF" | "Slides" | "Video" | "Link">("PDF");
+  const [materialLink, setMaterialLink] = useState("");
+  const [materialFile, setMaterialFile] = useState<File | null>(null);
+  const [isUploadingMaterial, setIsUploadingMaterial] = useState(false);
+
+  const resetCourseForm = () => setCourseForm(emptyCourseForm);
+
+  const handleCreateCourse = async () => {
+    if (!courseForm.code.trim() || !courseForm.title.trim()) {
+      toast.error("Course code and title are required.");
+      return;
+    }
+
+    setIsCreatingCourse(true);
     try {
       await apiRequest<{ message: string }>("/academic/courses", {
         method: "POST",
         body: JSON.stringify({
-          code: `RUP${Math.floor(100 + Math.random() * 900)}`,
-          title: "New Academic Technology Course",
-          faculty: "Faculty of Engineering",
-          department: "Information Technology Engineering",
-          credits: 3,
-          semester: "Year 2 - Semester 2",
-          room: "Room TBA",
-          schedule: "Friday 09:00 - 10:30",
-          description: "New course prepared from the RUPPER Connect teacher workspace.",
+          ...courseForm,
+          code: courseForm.code.trim().toUpperCase(),
+          title: courseForm.title.trim(),
+          credits: Number(courseForm.credits) || 3,
         }),
       });
       await queryClient.invalidateQueries({ queryKey: ACADEMIC_COURSES_QUERY_KEY });
-      toast.success("Course created in backend");
-    } catch {
-      toast.error("Could not create course");
+      toast.success("Course created");
+      setCourseDialogOpen(false);
+      resetCourseForm();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create course");
+    } finally {
+      setIsCreatingCourse(false);
     }
   };
 
-  const uploadMaterial = async (courseId: string) => {
+  const openMaterialDialog = (courseId: string) => {
+    setMaterialCourseId(courseId);
+    setMaterialTitle("");
+    setMaterialType("PDF");
+    setMaterialLink("");
+    setMaterialFile(null);
+  };
+
+  const handleUploadMaterial = async () => {
+    if (!materialCourseId) return;
+    if (!materialTitle.trim()) {
+      toast.error("Give the material a title.");
+      return;
+    }
+    if (materialType === "Link" && !materialLink.trim()) {
+      toast.error("Add a link URL.");
+      return;
+    }
+    if (materialType !== "Link" && !materialFile) {
+      toast.error("Choose a file to upload.");
+      return;
+    }
+    if (materialFile && materialFile.size > MAX_MATERIAL_BYTES) {
+      toast.error("File is too large. Maximum size is 8MB.");
+      return;
+    }
+
+    setIsUploadingMaterial(true);
     try {
-      await apiRequest<{ message: string }>(`/academic/courses/${courseId}/materials`, {
+      const payload: Record<string, unknown> = { title: materialTitle.trim(), type: materialType };
+      if (materialType === "Link") {
+        payload.fileUrl = materialLink.trim();
+      } else if (materialFile) {
+        payload.fileName = materialFile.name;
+        payload.fileMime = materialFile.type || "application/octet-stream";
+        payload.fileData = await readFileAsBase64(materialFile);
+      }
+
+      await apiRequest<{ message: string }>(`/academic/courses/${materialCourseId}/materials`, {
         method: "POST",
-        body: JSON.stringify({ title: "New lecture resource", type: "PDF" }),
+        body: JSON.stringify(payload),
       });
       await queryClient.invalidateQueries({ queryKey: ACADEMIC_COURSES_QUERY_KEY });
-      toast.success("Material uploaded to backend");
-    } catch {
-      toast.error("Could not upload material");
+      toast.success("Material uploaded");
+      setMaterialCourseId(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not upload material");
+    } finally {
+      setIsUploadingMaterial(false);
     }
   };
 
@@ -84,7 +181,7 @@ export default function Courses() {
         }
         actions={
           isTeacher ? (
-            <Button size="sm" variant="secondary" className="font-semibold" onClick={createCourse}>
+            <Button size="sm" variant="secondary" className="font-semibold" onClick={() => setCourseDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               New course
             </Button>
@@ -164,10 +261,10 @@ export default function Courses() {
                       </p>
                     )}
                     {course.materials.map((material) => (
-                      <ActionRow key={material.id} icon={FileText} title={material.title} meta={`${material.type} - ${material.uploadedAt}`} />
+                      <MaterialRow key={material.id} material={material} />
                     ))}
                     {isTeacher && (
-                      <Button variant="outline" className="w-full" onClick={() => uploadMaterial(course.id)}>
+                      <Button variant="outline" className="w-full" onClick={() => openMaterialDialog(course.id)}>
                         <Upload className="mr-2 h-4 w-4" />
                         Upload material
                       </Button>
@@ -215,6 +312,183 @@ export default function Courses() {
           </Card>
         ))}
       </div>
+
+      <Dialog
+        open={courseDialogOpen}
+        onOpenChange={(open) => {
+          setCourseDialogOpen(open);
+          if (!open) resetCourseForm();
+        }}
+      >
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Create a new course</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 pt-2 sm:grid-cols-2">
+            <div className="sm:col-span-1">
+              <Label htmlFor="course-code">Course code</Label>
+              <Input
+                id="course-code"
+                value={courseForm.code}
+                onChange={(e) => setCourseForm((f) => ({ ...f, code: e.target.value }))}
+                placeholder="CS401"
+              />
+            </div>
+            <div className="sm:col-span-1">
+              <Label htmlFor="course-credits">Credits</Label>
+              <Input
+                id="course-credits"
+                type="number"
+                min={1}
+                max={10}
+                value={courseForm.credits}
+                onChange={(e) => setCourseForm((f) => ({ ...f, credits: e.target.value }))}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="course-title">Title</Label>
+              <Input
+                id="course-title"
+                value={courseForm.title}
+                onChange={(e) => setCourseForm((f) => ({ ...f, title: e.target.value }))}
+                placeholder="Distributed Systems"
+              />
+            </div>
+            <div>
+              <Label htmlFor="course-faculty">Faculty</Label>
+              <Input
+                id="course-faculty"
+                value={courseForm.faculty}
+                onChange={(e) => setCourseForm((f) => ({ ...f, faculty: e.target.value }))}
+                placeholder="Faculty of Engineering"
+              />
+            </div>
+            <div>
+              <Label htmlFor="course-department">Department</Label>
+              <Input
+                id="course-department"
+                value={courseForm.department}
+                onChange={(e) => setCourseForm((f) => ({ ...f, department: e.target.value }))}
+                placeholder="Information Technology Engineering"
+              />
+            </div>
+            <div>
+              <Label htmlFor="course-semester">Semester</Label>
+              <Input
+                id="course-semester"
+                value={courseForm.semester}
+                onChange={(e) => setCourseForm((f) => ({ ...f, semester: e.target.value }))}
+                placeholder="Year 2 - Semester 2"
+              />
+            </div>
+            <div>
+              <Label htmlFor="course-room">Room</Label>
+              <Input
+                id="course-room"
+                value={courseForm.room}
+                onChange={(e) => setCourseForm((f) => ({ ...f, room: e.target.value }))}
+                placeholder="Lab 204"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="course-schedule">Schedule</Label>
+              <Input
+                id="course-schedule"
+                value={courseForm.schedule}
+                onChange={(e) => setCourseForm((f) => ({ ...f, schedule: e.target.value }))}
+                placeholder="Monday 08:00 - 09:30"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="course-description">Description</Label>
+              <Input
+                id="course-description"
+                value={courseForm.description}
+                onChange={(e) => setCourseForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="What this course covers..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCourseDialogOpen(false)} disabled={isCreatingCourse}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateCourse} className="bg-gradient-primary text-primary-foreground" disabled={isCreatingCourse}>
+              {isCreatingCourse ? "Creating..." : "Create course"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(materialCourseId)} onOpenChange={(open) => !open && setMaterialCourseId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload course material</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <Label htmlFor="material-title">Title</Label>
+              <Input
+                id="material-title"
+                value={materialTitle}
+                onChange={(e) => setMaterialTitle(e.target.value)}
+                placeholder="Week 3 lecture slides"
+              />
+            </div>
+            <div>
+              <Label>Type</Label>
+              <Select value={materialType} onValueChange={(value) => setMaterialType(value as typeof materialType)}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PDF">PDF</SelectItem>
+                  <SelectItem value="Slides">Slides</SelectItem>
+                  <SelectItem value="Video">Video</SelectItem>
+                  <SelectItem value="Link">Link</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {materialType === "Link" ? (
+              <div>
+                <Label htmlFor="material-link">Link URL</Label>
+                <Input
+                  id="material-link"
+                  value={materialLink}
+                  onChange={(e) => setMaterialLink(e.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+            ) : (
+              <div>
+                <Label htmlFor="material-file">File</Label>
+                <Input
+                  id="material-file"
+                  type="file"
+                  onChange={(e) => setMaterialFile(e.target.files?.[0] ?? null)}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {materialFile ? `${materialFile.name} - ${formatBytes(materialFile.size)}` : "Maximum size 8MB. Saved directly to the database."}
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setMaterialCourseId(null)} disabled={isUploadingMaterial}>
+              Cancel
+            </Button>
+            <Button onClick={handleUploadMaterial} className="bg-gradient-primary text-primary-foreground" disabled={isUploadingMaterial}>
+              {isUploadingMaterial ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading...
+                </>
+              ) : (
+                "Upload"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -257,4 +531,67 @@ function ActionRow({
       </div>
     </div>
   );
+}
+
+async function downloadMaterialFile(material: AcademicMaterial) {
+  if (!material.downloadUrl) return;
+  try {
+    const res = await fetch(buildApiUrl(material.downloadUrl), {
+      headers: { Authorization: `Bearer ${getToken() || ""}` },
+    });
+    if (!res.ok) throw new Error("Download failed");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = material.fileName || material.title;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    toast.error("Could not download this file");
+  }
+}
+
+function MaterialRow({ material }: { material: AcademicMaterial }) {
+  const meta = [material.type, material.uploadedAt, formatBytes(material.fileSize)].filter(Boolean).join(" - ");
+  const isLink = material.type === "Link" && material.fileUrl;
+  const isDownloadable = Boolean(material.downloadUrl);
+  const Icon = material.type === "Link" ? LinkIcon : FileText;
+
+  const content = (
+    <>
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-foreground">{material.title}</p>
+        <p className="truncate text-xs text-muted-foreground">{meta}</p>
+      </div>
+      {(isLink || isDownloadable) && <Download className="h-4 w-4 shrink-0 text-muted-foreground" />}
+    </>
+  );
+
+  const className = `flex w-full items-center gap-3 rounded-xl border border-border/60 bg-card p-3 text-left transition-base ${
+    isLink || isDownloadable ? "hover:border-primary/40 hover:bg-secondary/30" : "cursor-default opacity-80"
+  }`;
+
+  if (isLink) {
+    return (
+      <a href={material.fileUrl} target="_blank" rel="noreferrer" className={className}>
+        {content}
+      </a>
+    );
+  }
+
+  if (isDownloadable) {
+    return (
+      <button type="button" onClick={() => downloadMaterialFile(material)} className={className}>
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={className}>{content}</div>;
 }

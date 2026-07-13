@@ -9,14 +9,24 @@ import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ACADEMIC_MESSAGES_QUERY_KEY, useAcademicMessages } from "@/hooks/useAcademicPlatform";
+import { ACADEMIC_MESSAGES_QUERY_KEY, useAcademicContacts, useAcademicMessages } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
 
 export default function Messages() {
   const queryClient = useQueryClient();
   const { data: threads = [], isFetching } = useAcademicMessages();
+  const { data: contacts = [] } = useAcademicContacts();
   const [body, setBody] = useState("");
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeTo, setComposeTo] = useState("");
+  const [composeSubject, setComposeSubject] = useState("");
+  const [composeBody, setComposeBody] = useState("");
+  const [isSending, setIsSending] = useState(false);
   const unread = threads.filter((thread) => thread.unread).length;
 
   const refreshMessages = () => queryClient.invalidateQueries({ queryKey: ACADEMIC_MESSAGES_QUERY_KEY });
@@ -36,6 +46,43 @@ export default function Messages() {
       toast.success("Message sent through backend");
     } catch {
       toast.error("Could not send message");
+    }
+  };
+
+  const openCompose = () => {
+    setComposeTo(contacts[0]?.id ?? "");
+    setComposeSubject("");
+    setComposeBody("");
+    setComposeOpen(true);
+  };
+
+  const sendComposedMessage = async () => {
+    if (!composeTo) {
+      toast.error("Choose a recipient.");
+      return;
+    }
+    if (!composeBody.trim()) {
+      toast.error("Write a message first.");
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      await apiRequest<{ message: string }>("/academic/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          receiverId: composeTo,
+          subject: composeSubject.trim() || "Academic message",
+          body: composeBody.trim(),
+        }),
+      });
+      await refreshMessages();
+      toast.success("Message sent");
+      setComposeOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not send message");
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -63,7 +110,7 @@ export default function Messages() {
         title="Messages"
         description="Direct teacher and student conversations for academic support, feedback, and class coordination."
         actions={
-          <Button size="sm" variant="secondary" className="font-semibold" onClick={createMessage}>
+          <Button size="sm" variant="secondary" className="font-semibold" onClick={openCompose}>
             <MessageSquarePlus className="mr-2 h-4 w-4" />
             New message
           </Button>
@@ -129,6 +176,61 @@ export default function Messages() {
           </Button>
         </Card>
       </div>
+
+      <Dialog open={composeOpen} onOpenChange={setComposeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New message</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <Label>To</Label>
+              <Select value={composeTo} onValueChange={setComposeTo}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Choose a recipient" />
+                </SelectTrigger>
+                <SelectContent>
+                  {contacts.map((contact) => (
+                    <SelectItem key={contact.id} value={contact.id}>
+                      {contact.name} ({contact.role})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {contacts.length === 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">No recipients available yet.</p>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="compose-subject">Subject</Label>
+              <Input
+                id="compose-subject"
+                value={composeSubject}
+                onChange={(e) => setComposeSubject(e.target.value)}
+                placeholder="Academic message"
+              />
+            </div>
+            <div>
+              <Label htmlFor="compose-body">Message</Label>
+              <Textarea
+                id="compose-body"
+                value={composeBody}
+                onChange={(e) => setComposeBody(e.target.value)}
+                placeholder="Write a clear academic message..."
+                className="min-h-32"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setComposeOpen(false)} disabled={isSending}>
+              Cancel
+            </Button>
+            <Button onClick={sendComposedMessage} className="bg-gradient-primary text-primary-foreground" disabled={isSending}>
+              {isSending ? "Sending..." : "Send"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

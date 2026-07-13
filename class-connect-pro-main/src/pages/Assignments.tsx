@@ -10,9 +10,11 @@ import { SyncStatus } from "@/components/shared/SyncStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useRole } from "@/context/RoleContext";
 import type { AcademicAssignment } from "@/data/academicPlatform";
@@ -52,6 +54,9 @@ export default function Assignments() {
   const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [savingSubmissionId, setSavingSubmissionId] = useState<string | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [newAssignment, setNewAssignment] = useState({ courseId: "", title: "", description: "", deadline: "", maxScore: "100" });
+  const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
   const isTeacher = role === "teacher";
   const pending = assignments.filter((item) => item.status === "pending").length;
   const submitted = assignments.filter((item) => item.status === "submitted" || item.status === "graded").length;
@@ -60,28 +65,40 @@ export default function Assignments() {
 
   const refreshAssignments = () => queryClient.invalidateQueries({ queryKey: ACADEMIC_ASSIGNMENTS_QUERY_KEY });
 
-  const createAssignment = async () => {
-    const firstCourse = courses[0];
-    if (!firstCourse) {
+  const openCreateDialog = () => {
+    if (!courses.length) {
       toast.error("Create a course first.");
       return;
     }
+    setNewAssignment({ courseId: courses[0].id, title: "", description: "", deadline: "", maxScore: "100" });
+    setCreateDialogOpen(true);
+  };
 
+  const createAssignment = async () => {
+    if (!newAssignment.courseId || !newAssignment.title.trim() || !newAssignment.deadline) {
+      toast.error("Course, title, and deadline are required.");
+      return;
+    }
+
+    setIsCreatingAssignment(true);
     try {
       await apiRequest<{ message: string }>("/academic/assignments", {
         method: "POST",
         body: JSON.stringify({
-          courseId: firstCourse.id,
-          title: "New backend assignment",
-          description: "Assignment created from RUPPER Connect.",
-          deadline: "2026-08-01 23:59:00",
-          maxScore: 100,
+          courseId: newAssignment.courseId,
+          title: newAssignment.title.trim(),
+          description: newAssignment.description.trim(),
+          deadline: newAssignment.deadline.replace("T", " ") + ":00",
+          maxScore: Number(newAssignment.maxScore) || 100,
         }),
       });
       await refreshAssignments();
-      toast.success("Assignment created in backend");
-    } catch {
-      toast.error("Could not create assignment");
+      toast.success("Assignment created");
+      setCreateDialogOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create assignment");
+    } finally {
+      setIsCreatingAssignment(false);
     }
   };
 
@@ -145,7 +162,7 @@ export default function Assignments() {
         }
         actions={
           isTeacher ? (
-            <Button size="sm" variant="secondary" className="font-semibold" onClick={createAssignment}>
+            <Button size="sm" variant="secondary" className="font-semibold" onClick={openCreateDialog}>
               <Plus className="mr-2 h-4 w-4" />
               Create assignment
             </Button>
@@ -216,6 +233,82 @@ export default function Assignments() {
           );
         })}
       </div>
+
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create assignment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <Label>Course</Label>
+              <Select
+                value={newAssignment.courseId}
+                onValueChange={(value) => setNewAssignment((f) => ({ ...f, courseId: value }))}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Choose a course" />
+                </SelectTrigger>
+                <SelectContent>
+                  {courses.map((course) => (
+                    <SelectItem key={course.id} value={course.id}>
+                      {course.code} - {course.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="assignment-title">Title</Label>
+              <Input
+                id="assignment-title"
+                value={newAssignment.title}
+                onChange={(e) => setNewAssignment((f) => ({ ...f, title: e.target.value }))}
+                placeholder="Homework 4 - Recursion"
+              />
+            </div>
+            <div>
+              <Label htmlFor="assignment-description">Description</Label>
+              <Textarea
+                id="assignment-description"
+                value={newAssignment.description}
+                onChange={(e) => setNewAssignment((f) => ({ ...f, description: e.target.value }))}
+                placeholder="What should students submit?"
+                className="min-h-[5rem]"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="assignment-deadline">Deadline</Label>
+                <Input
+                  id="assignment-deadline"
+                  type="datetime-local"
+                  value={newAssignment.deadline}
+                  onChange={(e) => setNewAssignment((f) => ({ ...f, deadline: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label htmlFor="assignment-max-score">Max score</Label>
+                <Input
+                  id="assignment-max-score"
+                  type="number"
+                  min={1}
+                  value={newAssignment.maxScore}
+                  onChange={(e) => setNewAssignment((f) => ({ ...f, maxScore: e.target.value }))}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCreateDialogOpen(false)} disabled={isCreatingAssignment}>
+              Cancel
+            </Button>
+            <Button onClick={createAssignment} className="bg-gradient-primary text-primary-foreground" disabled={isCreatingAssignment}>
+              {isCreatingAssignment ? "Creating..." : "Create assignment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(reviewingAssignment)} onOpenChange={(open) => !open && setReviewingAssignment(null)}>
         <DialogContent className="max-w-2xl">

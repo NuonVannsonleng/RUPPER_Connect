@@ -8,6 +8,10 @@ export interface AcademicMaterial {
   title: string;
   type: "PDF" | "Slides" | "Video" | "Link";
   uploadedAt: string;
+  fileName?: string;
+  fileSize?: number;
+  fileUrl?: string;
+  downloadUrl?: string;
 }
 
 export interface AcademicAssignment {
