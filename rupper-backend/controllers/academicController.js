@@ -227,6 +227,21 @@ const resolveCourseId = async (courseId) => {
 const seedAcademicData = async (user) => {
   await ensureAcademicSchema();
 
+  // Several endpoints call this on first load (courses, assignments, quizzes, calendar, ...),
+  // and the frontend fires those requests in parallel. Without a lock, concurrent requests
+  // all see an empty table at once and each inserts its own copy of the seed rows, producing
+  // duplicates. A MySQL named lock serializes the check-then-insert so only one request seeds.
+  const [[lockRow]] = await pool.query("SELECT GET_LOCK('rupper_seed_academic', 15) AS locked");
+  if (!lockRow.locked) return;
+
+  try {
+    await seedAcademicDataLocked(user);
+  } finally {
+    await pool.query("SELECT RELEASE_LOCK('rupper_seed_academic')");
+  }
+};
+
+const seedAcademicDataLocked = async (user) => {
   const [courseCountRows] = await pool.query("SELECT COUNT(*) AS total FROM courses");
   if (Number(courseCountRows[0].total) === 0) {
     const lecturerId = user.role === "teacher" ? user.id : null;

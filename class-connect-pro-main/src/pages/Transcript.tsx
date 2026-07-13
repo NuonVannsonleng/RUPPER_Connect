@@ -55,8 +55,8 @@ export default function Transcript() {
 
       <Card className="overflow-hidden border-border/60 shadow-soft">
         <div className="border-b border-border bg-secondary/40 px-5 py-4">
-          <h2 className="font-display text-lg font-bold text-foreground">{user?.name}</h2>
-          <p className="text-sm text-muted-foreground">
+          <h2 className="break-words font-display text-lg font-bold text-foreground">{user?.name}</h2>
+          <p className="break-words text-sm text-muted-foreground">
             {user?.studentId || user?.email} {user?.major ? `- ${user.major}` : ""}
           </p>
         </div>

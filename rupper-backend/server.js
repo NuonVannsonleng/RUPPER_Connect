@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const getConnection = require("./db");
+const { dedupeSeedData } = require("./migrations/dedupeSeedData");
 const pool = getConnection();
 
 const app = express();
@@ -54,5 +55,9 @@ app.use((err, req, res, next) => {
     detail: process.env.NODE_ENV === "production" ? undefined : err.message,
   });
 });
+
+dedupeSeedData()
+  .then((results) => console.log("Seed data dedupe check:", results))
+  .catch((error) => console.error("Seed data dedupe check failed:", error.message));
 
 app.listen(PORT, () => console.log(`RUPPER backend running on http://localhost:${PORT}`));

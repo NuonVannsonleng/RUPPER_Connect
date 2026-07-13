@@ -46,7 +46,7 @@ import {
   useAcademicTranscript,
 } from "@/hooks/useAcademicPlatform";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
-import { useAttendanceSummary } from "@/hooks/useAttendanceSummary";
+import { useAttendanceSummary, useClassAttendanceSummary } from "@/hooks/useAttendanceSummary";
 import { calculateClassAverage, calculateStudentAverages, useGradebook, useGradebookRoster } from "@/hooks/useGradebook";
 import { useSchedule } from "@/hooks/useSchedule";
 
@@ -67,6 +67,7 @@ export default function Dashboard() {
   const { data: studentRiskAlerts = [] } = useAcademicRiskAlerts();
   const { data: transcriptRecords = [] } = useAcademicTranscript();
   const { data: attendanceSummary } = useAttendanceSummary();
+  const { data: classAttendanceSummary } = useClassAttendanceSummary();
 
   const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
   const visibleSchedule = scheduleItems.filter(
@@ -86,6 +87,10 @@ export default function Dashboard() {
     ? transcriptRecords.reduce((total, record) => total + record.gradePoint * record.credits, 0) / completedCredits
     : 0;
   const latestSemester = transcriptRecords[transcriptRecords.length - 1]?.semester ?? "Current term";
+
+  const totalSubmissions = academicAssignments.reduce((sum, item) => sum + item.submissionCount, 0);
+  const possibleSubmissions = academicAssignments.length * gradebookRoster.length;
+  const completionRate = possibleSubmissions ? Math.round((totalSubmissions / possibleSubmissions) * 100) : 0;
 
   const courseGradePerformance = academicCourses.length
     ? academicCourses.map((course) => ({
@@ -111,9 +116,9 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <StatCard label="Total students" value={gradebookRoster.length} hint="Across active classes" icon={Users} tone="primary" to="/attendance" />
           <StatCard label="Active classes" value={academicCourses.length} hint="Current semester" icon={BookOpenCheck} tone="info" to="/courses" />
-          <StatCard label="Average grade" value={`${classAverage || 84}%`} hint="Gradebook average" icon={Award} tone="success" to="/gradebook" />
-          <StatCard label="Attendance rate" value="91%" hint="Class trend" icon={ClipboardCheck} tone="success" to="/attendance" />
-          <StatCard label="Completion" value="78%" hint="Assignments submitted" icon={FileText} tone="warning" to="/assignments" />
+          <StatCard label="Average grade" value={`${classAverage}%`} hint="Gradebook average" icon={Award} tone="success" to="/gradebook" />
+          <StatCard label="Attendance rate" value={`${classAttendanceSummary?.percentage ?? 0}%`} hint="Class trend" icon={ClipboardCheck} tone="success" to="/attendance" />
+          <StatCard label="Completion" value={`${completionRate}%`} hint="Assignments submitted" icon={FileText} tone="warning" to="/assignments" />
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
@@ -413,9 +418,9 @@ function ChartCard({ title, description, children }: { title: string; descriptio
 
 function ProfileLine({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-secondary/30 px-4 py-3">
+    <div className="min-w-0 rounded-xl border border-border/60 bg-secondary/30 px-4 py-3">
       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
+      <p className="mt-1 break-words text-sm font-semibold text-foreground">{value}</p>
     </div>
   );
 }

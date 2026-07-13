@@ -201,7 +201,7 @@ export default function Attendance() {
         body: JSON.stringify({ date, records: payload }),
       });
       toast.success("Attendance saved", {
-        description: `${payload.length} students marked for ${date}.`,
+        description: `${payload.length} ${payload.length === 1 ? "student" : "students"} marked for ${date}.`,
       });
     } catch {
       toast.error("Could not save attendance");

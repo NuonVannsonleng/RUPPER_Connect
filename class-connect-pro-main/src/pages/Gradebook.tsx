@@ -68,7 +68,9 @@ export default function Gradebook() {
       });
       await queryClient.invalidateQueries({ queryKey: GRADEBOOK_QUERY_KEY });
       setDraft(null);
-      toast.success("Gradebook saved", { description: `${payload.length} entries synced to the backend.` });
+      toast.success("Gradebook saved", {
+        description: `${payload.length} ${payload.length === 1 ? "entry" : "entries"} synced to the backend.`,
+      });
     } catch {
       toast.error("Could not save the gradebook. Please try again.");
     } finally {
