@@ -1,4 +1,4 @@
-import { NavLink as RouterNavLink, useLocation } from "react-router-dom";
+import { Link, NavLink as RouterNavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   ClipboardCheck,
@@ -24,7 +24,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import { useRole } from "@/context/RoleContext";
 
@@ -58,8 +57,6 @@ const studentNav = [
 ];
 
 export function AppSidebar() {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
   const { role } = useRole();
   const location = useLocation();
 
@@ -69,31 +66,37 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      <SidebarHeader className={`border-b border-sidebar-border py-5 ${collapsed ? "px-1" : "px-4"}`}>
-        <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
+      {/* Collapse styling is driven by the sidebar's own data-collapsible attribute rather
+          than React state, so the logo and wordmark ease out in lockstep with the 200ms
+          width animation instead of popping the moment the state flips. */}
+      <SidebarHeader className="overflow-hidden border-b border-sidebar-border px-4 py-5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:px-0">
+        <Link
+          to="/dashboard"
+          aria-label="RUPPER Connect - go to dashboard"
+          className="flex items-center gap-3 rounded-xl outline-none transition-[gap,opacity] duration-200 ease-linear hover:opacity-90 focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
+        >
+          {/* Scaled rather than resized: transform keeps this off the layout path, and
+              0.8 x 40px lands on 32px so the logo lines up exactly with the nav icons. */}
           <img
             src={schoolLogo}
-            alt="RUPPER logo"
-            className={`rounded-full object-contain transition-base ${
-              collapsed
-                ? "h-10 w-10 bg-transparent p-0 shadow-none ring-1 ring-sidebar-primary/25"
-                : "h-10 w-10 bg-white p-0.5 shadow-soft"
-            }`}
+            alt=""
+            className="h-10 w-10 shrink-0 rounded-full bg-white object-contain p-0.5 shadow-soft transition-transform duration-200 ease-linear group-data-[collapsible=icon]:scale-[0.8]"
           />
-          {!collapsed && (
-            <div className="flex flex-col leading-tight animate-fade-in">
-              <span className="font-display text-base font-bold text-sidebar-foreground">
-                RUPPER
-              </span>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/60">
-                Connect
-              </span>
-            </div>
-          )}
-        </div>
+          <span className="flex min-w-0 max-w-[10rem] flex-col overflow-hidden whitespace-nowrap leading-tight transition-[max-width,opacity] duration-200 ease-linear group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:opacity-0">
+            <span className="font-display text-base font-bold text-sidebar-foreground">
+              RUPPER
+            </span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sidebar-foreground/60">
+              Connect
+            </span>
+          </span>
+        </Link>
       </SidebarHeader>
 
-      <SidebarContent className="px-2 py-4">
+      {/* Collapsed the rail is 3rem wide and the buttons are forced to 2rem, so the default
+          px-2 left them wedged against both edges. Dropping the padding when collapsed and
+          centring the buttons gives them an even 8px of breathing room. */}
+      <SidebarContent className="px-2 py-4 group-data-[collapsible=icon]:px-0">
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50">
             {role === "teacher" ? "Teaching" : "Learning"}
@@ -108,7 +111,7 @@ export function AppSidebar() {
                     <SidebarMenuButton
                       asChild
                       tooltip={item.title}
-                      className={`transition-base ${
+                      className={`transition-base group-data-[collapsible=icon]:mx-auto ${
                         active
                           ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
                           : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
