@@ -77,7 +77,8 @@
     --sidebar-ring: 45 95% 55%;
 
     /* Motion */
-    --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .dark {
@@ -170,51 +171,75 @@
   .shadow-elegant      { box-shadow: var(--shadow-lg); }
   .shadow-soft         { box-shadow: var(--shadow-md); }
   .shadow-glow         { box-shadow: var(--shadow-glow); }
-  .transition-base     { transition: all var(--transition-base); }
+
+  /* Transitions an explicit property list rather than `all`. With `all` the browser
+     watches every animatable property - including layout ones like width/height/margin -
+     so any unrelated style recalculation on a hovered card had to be re-checked and could
+     animate by accident. This list matches what the UI actually animates. */
+  .transition-base {
+    transition-property: color, background-color, border-color, text-decoration-color,
+      fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 180ms;
+  }
+
   .animate-float-soft  { animation: float-soft 6s ease-in-out infinite; }
-  .animate-route-in    { animation: route-in 360ms cubic-bezier(0.22, 1, 0.36, 1); }
-  .animate-page-switch { animation: page-switch 420ms cubic-bezier(0.22, 1, 0.36, 1); }
-  .animate-route-progress { animation: route-progress 360ms ease-out; }
+  .animate-route-in    { animation: route-in 240ms var(--ease-out-soft) both; }
+  .animate-page-switch { animation: page-switch 200ms var(--ease-out-soft) both; }
+  .animate-route-progress { animation: route-progress 900ms cubic-bezier(0.65, 0, 0.35, 1) infinite; }
 }
 
+/* Honour the OS "reduce motion" setting: keep the app fully usable, just without
+   the movement. Durations are near-zero rather than 0 so animationend/transitionend
+   handlers still fire. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Every keyframe below animates only `opacity` and `transform` (via translate3d, which
+   keeps the element on its own compositor layer). Properties like `filter: blur()`,
+   `width` or `top` force the browser to re-rasterize or re-layout on every frame, which
+   is what made page transitions stutter on content-heavy pages like the dashboard. */
+
 @keyframes float-soft {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -8px, 0); }
 }
 
 @keyframes route-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translate3d(0, 8px, 0);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 @keyframes page-switch {
-  0% {
+  from {
     opacity: 0;
-    transform: translateY(12px) scale(0.992);
-    filter: blur(2px);
+    transform: translate3d(0, 8px, 0);
   }
-  60% {
+  to {
     opacity: 1;
-    filter: blur(0);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 @keyframes route-progress {
   from {
-    transform: translateX(-70%);
+    transform: translate3d(-100%, 0, 0);
   }
   to {
-    transform: translateX(60%);
+    transform: translate3d(300%, 0, 0);
   }
 }

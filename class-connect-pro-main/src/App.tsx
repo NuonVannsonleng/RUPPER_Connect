@@ -31,7 +31,29 @@ import Home from "./pages/Home";
 import FacultyDetail from "./pages/FacultyDetail";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Navigating remounts the page, and with the default staleTime of 0 that meant a
+      // fresh network round-trip to the API on every single click - so each page sat on
+      // its "Syncing..." state before showing anything. Serving cached data for 30s makes
+      // revisiting a page instant; it still refetches in the background when stale, and
+      // mutations keep calling invalidateQueries directly so writes show up immediately.
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+      // Several hooks seed `initialData` with demo/empty placeholders so the UI has
+      // something to render on first paint. React Query otherwise treats that seed as a
+      // freshly-fetched value, which combined with staleTime above meant the real request
+      // was never sent and the placeholder stuck on screen. Dating it to the epoch marks
+      // it stale immediately, so the first mount still fetches; only genuinely fetched
+      // data gets the 30s cache window.
+      initialDataUpdatedAt: 0,
+      // The default 3 retries with backoff makes a genuinely failing request take many
+      // seconds to fall back to an error state.
+      retry: 1,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
