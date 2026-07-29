@@ -52,6 +52,31 @@ const buildNotifications = (role: string, announcementItems: Announcement[]): No
     accent: getAnnouncementAccent(announcement.category),
   }));
 
+  // Admins don't have the teaching/learning pages, so point them at their own area
+  // rather than at routes their role can't open.
+  if (role === "admin") {
+    return [
+      {
+        id: "admin-users",
+        title: "Manage accounts",
+        body: "Review roles, add staff, and keep the platform's access list tidy.",
+        time: "Today",
+        path: "/admin/users",
+        icon: ClipboardCheck,
+        accent: "bg-emerald-500/10 text-emerald-600",
+      },
+      {
+        id: "admin-courses",
+        title: "Course oversight",
+        body: "Check which courses still need a lecturer assigned.",
+        time: "Today",
+        path: "/admin/courses",
+        icon: CalendarClock,
+        accent: "bg-amber-500/10 text-amber-600",
+      },
+    ];
+  }
+
   if (role === "teacher") {
     return [
       {

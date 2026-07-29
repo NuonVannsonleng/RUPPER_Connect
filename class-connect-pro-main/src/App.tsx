@@ -11,25 +11,32 @@ import AppLayout from "@/components/layout/AppLayout";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { RouteTransition } from "@/components/shared/RouteTransition";
 
-import Dashboard from "./pages/Dashboard";
-import Attendance from "./pages/Attendance";
-import Gradebook from "./pages/Gradebook";
-import Schedule from "./pages/Schedule";
-import Announcements from "./pages/Announcements";
-import Courses from "./pages/Courses";
-import Assignments from "./pages/Assignments";
-import Quizzes from "./pages/Quizzes";
-import AcademicCalendar from "./pages/AcademicCalendar";
-import Transcript from "./pages/Transcript";
-import Messages from "./pages/Messages";
-import Login from "./pages/Login";
-import Signup from "./pages/Signup";
-import ForgotPassword from "./pages/ForgotPassword";
-import OAuthCallback from "./pages/OAuthCallback";
-import Settings from "./pages/Settings";
-import Home from "./pages/Home";
-import FacultyDetail from "./pages/FacultyDetail";
-import NotFound from "./pages/NotFound";
+// Pages are grouped by who they belong to: public/ needs no account, user/ is shared by
+// teachers and students, admin/ is administration only.
+import Home from "./pages/public/Home";
+import Login from "./pages/public/Login";
+import Signup from "./pages/public/Signup";
+import ForgotPassword from "./pages/public/ForgotPassword";
+import OAuthCallback from "./pages/public/OAuthCallback";
+import FacultyDetail from "./pages/public/FacultyDetail";
+import NotFound from "./pages/public/NotFound";
+
+import Dashboard from "./pages/user/Dashboard";
+import Attendance from "./pages/user/Attendance";
+import Gradebook from "./pages/user/Gradebook";
+import Schedule from "./pages/user/Schedule";
+import Announcements from "./pages/user/Announcements";
+import Courses from "./pages/user/Courses";
+import Assignments from "./pages/user/Assignments";
+import Quizzes from "./pages/user/Quizzes";
+import AcademicCalendar from "./pages/user/AcademicCalendar";
+import Transcript from "./pages/user/Transcript";
+import Messages from "./pages/user/Messages";
+import Settings from "./pages/user/Settings";
+
+import AdminDashboard from "./pages/admin/AdminDashboard";
+import UserManagement from "./pages/admin/UserManagement";
+import CourseOversight from "./pages/admin/CourseOversight";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -74,10 +81,10 @@ const App = () => (
                   <Route path="/oauth/callback" element={<OAuthCallback />} />
                   <Route path="/faculty/:facultyId" element={<FacultyDetail />} />
 
-                  {/* Protected app routes */}
+                  {/* Teacher + student area */}
                   <Route
                     element={
-                      <ProtectedRoute>
+                      <ProtectedRoute allow={["teacher", "student"]}>
                         <AppLayout />
                       </ProtectedRoute>
                     }
@@ -93,7 +100,30 @@ const App = () => (
                     <Route path="/transcript"     element={<Transcript />} />
                     <Route path="/messages"       element={<Messages />} />
                     <Route path="/announcements"  element={<Announcements />} />
-                    <Route path="/settings"       element={<Settings />} />
+                  </Route>
+
+                  {/* Admin area */}
+                  <Route
+                    element={
+                      <ProtectedRoute allow={["admin"]}>
+                        <AppLayout />
+                      </ProtectedRoute>
+                    }
+                  >
+                    <Route path="/admin"          element={<AdminDashboard />} />
+                    <Route path="/admin/users"    element={<UserManagement />} />
+                    <Route path="/admin/courses"  element={<CourseOversight />} />
+                  </Route>
+
+                  {/* Everyone signed in manages their own profile and password here. */}
+                  <Route
+                    element={
+                      <ProtectedRoute>
+                        <AppLayout />
+                      </ProtectedRoute>
+                    }
+                  >
+                    <Route path="/settings" element={<Settings />} />
                   </Route>
 
                   <Route path="*" element={<NotFound />} />

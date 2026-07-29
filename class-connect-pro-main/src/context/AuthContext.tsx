@@ -1,7 +1,26 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { apiRequest, buildApiUrl, getToken, TOKEN_KEY } from "@/lib/api";
 
-export type UserRole = "teacher" | "student";
+/**
+ * Two top-level groups, with "user" splitting by what someone can do:
+ *
+ *   admin
+ *   user ──┬── teacher
+ *          └── student
+ *
+ * "user" is a grouping rather than a stored value - the column holds one of these three.
+ * Public signup only ever accepts teacher/student; admin is granted by another admin or
+ * by the `npm run make-admin` script.
+ */
+export type UserRole = "admin" | "teacher" | "student";
+
+/** Roles that make up the "user" side of the hierarchy. */
+export const USER_ROLES: UserRole[] = ["teacher", "student"];
+
+/** Roles a person can pick for themselves when registering. */
+export const SIGNUP_ROLES: UserRole[] = ["student", "teacher"];
+
+export const isAdmin = (role?: UserRole) => role === "admin";
 export type OAuthProvider = "google";
 
 export interface AuthUser {

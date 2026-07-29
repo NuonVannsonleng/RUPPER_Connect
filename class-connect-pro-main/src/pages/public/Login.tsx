@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, GraduationCap, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { ArrowLeft, GraduationCap, LockKeyhole, Mail, ShieldCheck, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { AuthTextField } from "@/components/auth/AuthTextField";
@@ -34,7 +34,8 @@ export default function Login() {
 
     if (ok) {
       toast.success("Welcome back!");
-      navigate("/dashboard");
+      // Login only succeeds when the selected role matches the account, so this is safe.
+      navigate(role === "admin" ? "/admin" : "/dashboard");
     } else {
       toast.error("Invalid credentials or wrong role");
     }
@@ -64,9 +65,9 @@ export default function Login() {
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="space-y-2">
           <Label className="text-sm font-semibold text-slate-900 dark:text-slate-100">I am a</Label>
-          <div className="grid grid-cols-2 gap-3">
-            {(["student", "teacher"] as const).map((item) => {
-              const Icon = item === "student" ? GraduationCap : UserRound;
+          <div className="grid grid-cols-3 gap-3">
+            {(["student", "teacher", "admin"] as const).map((item) => {
+              const Icon = item === "student" ? GraduationCap : item === "teacher" ? UserRound : ShieldCheck;
               const active = role === item;
 
               return (

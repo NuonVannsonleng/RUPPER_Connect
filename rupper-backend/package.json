@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon --exec \"node server.js\""
+    "dev": "nodemon --exec \"node server.js\"",
+    "make-admin": "node scripts/makeAdmin.js"
   },
 
   "keywords": [],

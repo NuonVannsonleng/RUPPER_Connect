@@ -1,8 +1,15 @@
 import { Navigate } from "react-router-dom";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, type UserRole } from "@/context/AuthContext";
 
-export default function ProtectedRoute({ children }: { children: JSX.Element }) {
+interface ProtectedRouteProps {
+  children: JSX.Element;
+  /** When set, only these roles may enter; anyone else is bounced to their own dashboard. */
+  allow?: UserRole[];
+}
+
+export default function ProtectedRoute({ children, allow }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background text-sm font-medium text-muted-foreground">
@@ -10,6 +17,14 @@ export default function ProtectedRoute({ children }: { children: JSX.Element }) 
       </div>
     );
   }
+
   if (!user) return <Navigate to="/login" replace />;
+
+  // Guarding here as well as on the server: this only tidies up the UI, the API is what
+  // actually enforces access.
+  if (allow && !allow.includes(user.role)) {
+    return <Navigate to={user.role === "admin" ? "/admin" : "/dashboard"} replace />;
+  }
+
   return children;
 }

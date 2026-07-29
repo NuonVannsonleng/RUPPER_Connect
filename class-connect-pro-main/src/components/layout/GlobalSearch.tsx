@@ -26,6 +26,7 @@ import {
 import { faculties } from "@/data/faculties";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { useSchedule } from "@/hooks/useSchedule";
+import { useRole } from "@/context/RoleContext";
 
 type ResultType = "Page" | "Faculty" | "Department" | "Course" | "Schedule" | "Announcement";
 
@@ -38,6 +39,47 @@ interface SearchResult {
   icon: LucideIcon;
   keywords: string;
 }
+
+const adminPageResults: SearchResult[] = [
+  {
+    id: "page-admin-overview",
+    type: "Page",
+    title: "Admin overview",
+    description: "Platform statistics and the newest accounts",
+    path: "/admin",
+    icon: LayoutDashboard,
+    keywords: "admin overview stats platform dashboard",
+  },
+  {
+    id: "page-admin-users",
+    type: "Page",
+    title: "User management",
+    description: "Create accounts, change roles, remove users",
+    path: "/admin/users",
+    icon: FileText,
+    keywords: "users accounts roles admin teacher student promote delete",
+  },
+  {
+    id: "page-admin-courses",
+    type: "Page",
+    title: "Course oversight",
+    description: "Every course and who teaches it",
+    path: "/admin/courses",
+    icon: BookOpenCheck,
+    keywords: "courses lecturer assign oversight",
+  },
+];
+
+/**
+ * Results point at real routes, and the router now rejects a role that shouldn't be there -
+ * so filter anything the current role can't actually open, or the result becomes a dead end
+ * that bounces them straight back.
+ */
+const canAccess = (role: string, path: string) => {
+  if (path.startsWith("/admin")) return role === "admin";
+  if (path.startsWith("/faculty") || path === "/settings") return true;
+  return role !== "admin";
+};
 
 const pageResults: SearchResult[] = [
   {
@@ -161,6 +203,7 @@ const typeTone: Record<ResultType, string> = {
 
 export function GlobalSearch() {
   const navigate = useNavigate();
+  const { role } = useRole();
   const { data: scheduleItems = [] } = useSchedule();
   const { data: announcementItems = [] } = useAnnouncements();
   const { data: academicCourseItems = [] } = useAcademicCourses();
@@ -268,7 +311,7 @@ export function GlobalSearch() {
     }));
 
     return [
-      ...pageResults,
+      ...(role === "admin" ? adminPageResults : pageResults),
       ...facultyResults,
       ...courseResults,
       ...assignmentResults,
@@ -276,12 +319,13 @@ export function GlobalSearch() {
       ...calendarResults,
       ...scheduleResults,
       ...announcementResults,
-    ];
-  }, [academicAssignmentItems, academicCalendarItems, academicCourseItems, academicQuizItems, announcementItems, scheduleItems]);
+    ].filter((item) => canAccess(role, item.path));
+  }, [academicAssignmentItems, academicCalendarItems, academicCourseItems, academicQuizItems, announcementItems, role, scheduleItems]);
 
   const normalizedQuery = query.trim().toLowerCase();
+  const suggestedPages = role === "admin" ? adminPageResults : pageResults;
   const results = useMemo(() => {
-    if (!normalizedQuery) return [...pageResults.slice(0, 4), ...faculties.slice(0, 4).map((faculty) => ({
+    if (!normalizedQuery) return [...suggestedPages.slice(0, 4), ...faculties.slice(0, 4).map((faculty) => ({
       id: `faculty-suggestion-${faculty.id}`,
       type: "Faculty" as const,
       title: faculty.name,
@@ -298,7 +342,7 @@ export function GlobalSearch() {
           .includes(normalizedQuery)
       )
       .slice(0, 8);
-  }, [allResults, normalizedQuery]);
+  }, [allResults, normalizedQuery, suggestedPages]);
 
   const openResult = (result: SearchResult) => {
     setQuery("");

@@ -25,10 +25,15 @@ export function useAttendanceSummary() {
   });
 }
 
-export function useClassAttendanceSummary() {
+/**
+ * Class-wide attendance is teacher-only on the server, so this must stay disabled for
+ * students and admins - otherwise every dashboard load fires a request that 403s.
+ */
+export function useClassAttendanceSummary(enabled = true) {
   return useQuery({
     queryKey: ATTENDANCE_CLASS_SUMMARY_QUERY_KEY,
     queryFn: fetchClassAttendanceSummary,
     initialData: EMPTY_SUMMARY,
+    enabled,
   });
 }

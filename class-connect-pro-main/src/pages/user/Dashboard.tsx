@@ -67,7 +67,7 @@ export default function Dashboard() {
   const { data: studentRiskAlerts = [] } = useAcademicRiskAlerts();
   const { data: transcriptRecords = [] } = useAcademicTranscript();
   const { data: attendanceSummary } = useAttendanceSummary();
-  const { data: classAttendanceSummary } = useClassAttendanceSummary();
+  const { data: classAttendanceSummary } = useClassAttendanceSummary(role === "teacher");
 
   const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
   const visibleSchedule = scheduleItems.filter(

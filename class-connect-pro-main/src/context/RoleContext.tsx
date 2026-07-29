@@ -17,14 +17,14 @@ export const RoleProvider = ({ children }: { children: ReactNode }) => {
 
   const setRole = (_r: Role) => undefined;
 
+  const subtitleFor = (account: NonNullable<typeof authUser>) => {
+    if (account.role === "admin") return account.department || "Administrator";
+    if (account.role === "teacher") return account.department || "Teacher Account";
+    return account.major || account.year || "Student Account";
+  };
+
   const user = authUser
-    ? {
-        name: authUser.name,
-        subtitle:
-          authUser.role === "teacher"
-            ? authUser.department || "Teacher Account"
-            : authUser.major || authUser.year || "Student Account",
-      }
+    ? { name: authUser.name, subtitle: subtitleFor(authUser) }
     : { name: "Guest", subtitle: "Not signed in" };
 
   return <RoleContext.Provider value={{ role, setRole, user }}>{children}</RoleContext.Provider>;

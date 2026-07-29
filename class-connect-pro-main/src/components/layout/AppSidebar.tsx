@@ -11,6 +11,8 @@ import {
   MessagesSquare,
   ScrollText,
   Settings,
+  ShieldCheck,
+  UserCog,
 } from "lucide-react";
 import schoolLogo from "@/assets/school-logo.png";
 
@@ -41,6 +43,13 @@ const teacherNav = [
   { title: "Settings",      url: "/settings",      icon: Settings },
 ];
 
+const adminNav = [
+  { title: "Overview",     url: "/admin",         icon: ShieldCheck },
+  { title: "Users",        url: "/admin/users",   icon: UserCog },
+  { title: "Courses",      url: "/admin/courses", icon: BookOpenCheck },
+  { title: "Settings",     url: "/settings",      icon: Settings },
+];
+
 const studentNav = [
   { title: "Dashboard",     url: "/dashboard",     icon: LayoutDashboard },
   { title: "Courses",       url: "/courses",       icon: BookOpenCheck },
@@ -56,13 +65,21 @@ const studentNav = [
   { title: "Settings",      url: "/settings",      icon: Settings },
 ];
 
+const navForRole = { admin: adminNav, teacher: teacherNav, student: studentNav };
+
 export function AppSidebar() {
   const { role } = useRole();
   const location = useLocation();
 
-  const items = role === "teacher" ? teacherNav : studentNav;
+  const items = navForRole[role] ?? studentNav;
+  const home = role === "admin" ? "/admin" : "/dashboard";
 
-  const isActive = (path: string) => location.pathname.startsWith(path);
+  // Highlight the most specific match, so "/admin" doesn't stay lit while you're on
+  // "/admin/users" - a plain startsWith would light up both.
+  const activeUrl = items
+    .map((item) => item.url)
+    .filter((url) => location.pathname === url || location.pathname.startsWith(`${url}/`))
+    .sort((a, b) => b.length - a.length)[0];
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
@@ -71,7 +88,7 @@ export function AppSidebar() {
           width animation instead of popping the moment the state flips. */}
       <SidebarHeader className="overflow-hidden border-b border-sidebar-border px-4 py-5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:px-0">
         <Link
-          to="/dashboard"
+          to={home}
           aria-label="RUPPER Connect - go to dashboard"
           className="flex items-center gap-3 rounded-xl outline-none transition-[gap,opacity] duration-200 ease-linear hover:opacity-90 focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
         >
@@ -99,13 +116,13 @@ export function AppSidebar() {
       <SidebarContent className="px-2 py-4 group-data-[collapsible=icon]:px-0">
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/50">
-            {role === "teacher" ? "Teaching" : "Learning"}
+            {role === "admin" ? "Administration" : role === "teacher" ? "Teaching" : "Learning"}
           </SidebarGroupLabel>
 
           <SidebarGroupContent>
             <SidebarMenu>
               {items.map((item) => {
-                const active = isActive(item.url);
+                const active = item.url === activeUrl;
                 return (
                   <SidebarMenuItem key={item.title}> 
                     <SidebarMenuButton
