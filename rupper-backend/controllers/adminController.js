@@ -147,6 +147,27 @@ exports.deleteUser = async (req, res) => {
   res.json({ message: "User deleted" });
 };
 
+exports.setUserPassword = async (req, res) => {
+  // The way back in when email delivery isn't configured, or when someone has lost access
+  // to their inbox. Stamping password_changed_at also boots any session that was open on
+  // the old password.
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.length < 8) {
+    return res.status(400).json({ message: "New password must be at least 8 characters" });
+  }
+
+  const [target] = await pool.query("SELECT id, name FROM users WHERE id = ?", [req.params.id]);
+  if (!target.length) return res.status(404).json({ message: "User not found" });
+
+  const hashed = await bcrypt.hash(newPassword, 12);
+  await pool.query("UPDATE users SET password = ?, password_changed_at = NOW() WHERE id = ?", [
+    hashed,
+    req.params.id,
+  ]);
+
+  res.json({ message: `Password updated for ${target[0].name}. They will need to sign in again.` });
+};
+
 exports.getCourses = async (req, res) => {
   try {
     const [rows] = await pool.query(

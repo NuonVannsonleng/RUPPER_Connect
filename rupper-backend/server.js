@@ -3,7 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const getConnection = require("./db");
 const { dedupeSeedData } = require("./migrations/dedupeSeedData");
-const { bootstrapAdmin } = require("./config/bootstrapAdmin");
+const { bootstrapAdmin, ensurePasswordChangedColumn } = require("./config/bootstrapAdmin");
+const { ensureTable: ensureResetTokenTable } = require("./services/passwordReset");
 const pool = getConnection();
 
 const app = express();
@@ -57,6 +58,11 @@ app.use((err, req, res, next) => {
     detail: process.env.NODE_ENV === "production" ? undefined : err.message,
   });
 });
+
+// Schema the auth layer depends on, applied before anything can sign in.
+Promise.all([ensurePasswordChangedColumn(), ensureResetTokenTable()])
+  .then(() => console.log("Auth schema ready (password_changed_at, password_reset_tokens)."))
+  .catch((error) => console.error("Auth schema setup failed:", error.message));
 
 dedupeSeedData()
   .then((results) => console.log("Seed data dedupe check:", results))

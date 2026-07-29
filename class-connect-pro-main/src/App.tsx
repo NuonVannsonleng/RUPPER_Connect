@@ -17,6 +17,7 @@ import Home from "./pages/public/Home";
 import Login from "./pages/public/Login";
 import Signup from "./pages/public/Signup";
 import ForgotPassword from "./pages/public/ForgotPassword";
+import ResetPassword from "./pages/public/ResetPassword";
 import OAuthCallback from "./pages/public/OAuthCallback";
 import FacultyDetail from "./pages/public/FacultyDetail";
 import NotFound from "./pages/public/NotFound";
@@ -78,6 +79,7 @@ const App = () => (
                   <Route path="/login" element={<Login />} />
                   <Route path="/signup" element={<Signup />} />
                   <Route path="/forgot-password" element={<ForgotPassword />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
                   <Route path="/oauth/callback" element={<OAuthCallback />} />
                   <Route path="/faculty/:facultyId" element={<FacultyDetail />} />
 

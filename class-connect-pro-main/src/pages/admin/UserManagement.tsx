@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Search, ShieldCheck, Trash2, UserCog, Users } from "lucide-react";
+import { KeyRound, Loader2, Plus, Search, Trash2, UserCog, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -58,6 +58,9 @@ export default function UserManagement() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [isCreating, setIsCreating] = useState(false);
+  const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ADMIN_USERS_QUERY_KEY });
@@ -102,6 +105,29 @@ export default function UserManagement() {
       toast.error(error instanceof Error ? error.message : "Could not delete this account");
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleSetPassword = async () => {
+    if (!resetTarget) return;
+    if (resetPassword.length < 8) {
+      toast.error("Password must be at least 8 characters.");
+      return;
+    }
+
+    setIsResetting(true);
+    try {
+      const data = await apiRequest<{ message: string }>(`/admin/users/${resetTarget.id}/password`, {
+        method: "PUT",
+        body: JSON.stringify({ newPassword: resetPassword }),
+      });
+      toast.success(data.message);
+      setResetTarget(null);
+      setResetPassword("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not set this password");
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -243,6 +269,20 @@ export default function UserManagement() {
                     <Button
                       variant="ghost"
                       size="icon"
+                      className="h-9 w-9 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                      onClick={() => {
+                        setResetTarget(account);
+                        setResetPassword("");
+                      }}
+                      aria-label={`Set a new password for ${account.name}`}
+                      title="Set a new password"
+                    >
+                      <KeyRound className="h-4 w-4" />
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       className="h-9 w-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       onClick={() => setUserToDelete(account)}
                       disabled={isSelf}
@@ -322,6 +362,50 @@ export default function UserManagement() {
             </Button>
             <Button onClick={handleCreate} className="bg-gradient-primary text-primary-foreground" disabled={isCreating}>
               {isCreating ? "Creating..." : "Create account"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(resetTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setResetTarget(null);
+            setResetPassword("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Set a new password</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <p className="text-sm text-muted-foreground">
+              For <span className="font-semibold text-foreground">{resetTarget?.name}</span> ({resetTarget?.email}).
+              Use this when someone can't receive the reset email. They'll be signed out everywhere and will need to
+              sign in again with this password.
+            </p>
+            <div>
+              <Label htmlFor="admin-reset-password">New password</Label>
+              <Input
+                id="admin-reset-password"
+                type="text"
+                value={resetPassword}
+                onChange={(e) => setResetPassword(e.target.value)}
+                placeholder="At least 8 characters"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Give it to them in person or over a channel you trust, and ask them to change it from Settings.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setResetTarget(null)} disabled={isResetting}>
+              Cancel
+            </Button>
+            <Button onClick={handleSetPassword} className="bg-gradient-primary text-primary-foreground" disabled={isResetting}>
+              {isResetting ? "Saving..." : "Set password"}
             </Button>
           </DialogFooter>
         </DialogContent>

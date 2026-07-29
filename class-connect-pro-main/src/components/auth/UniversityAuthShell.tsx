@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { BookOpenCheck, CalendarDays, Megaphone, MessageCircle } from "lucide-react";
 
-import campusBg from "@/assets/rupp-campus-bg.png";
-import schoolLogo from "@/assets/school-logo.png";
+import campusBg from "@/assets/rupp-campus-bg.webp";
+import schoolLogo from "@/assets/school-logo.webp";
 
 interface UniversityAuthShellProps {
   eyebrow: string;

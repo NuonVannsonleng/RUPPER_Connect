@@ -1,6 +1,9 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const pool = require("../config/db");
+const { jwtSecret } = require("../config/secrets");
+const { createResetToken, consumeResetToken } = require("../services/passwordReset");
+const { sendPasswordResetEmail, isMailerConfigured } = require("../services/mailer");
 
 const publicUser = (u) => ({
   id: u.id,
@@ -16,7 +19,7 @@ const publicUser = (u) => ({
   office: u.office || "",
 });
 
-const makeToken = (user) => jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET || "dev_secret", { expiresIn: "7d" });
+const makeToken = (user) => jwt.sign({ id: user.id, role: user.role }, jwtSecret, { expiresIn: "7d" });
 
 exports.signup = async (req, res) => {
   const { name, email, password, role } = req.body;
@@ -94,20 +97,64 @@ exports.changePassword = async (req, res) => {
   if (!rows.length) return res.status(404).json({ message: "User not found" });
   const ok = await bcrypt.compare(currentPassword, rows[0].password);
   if (!ok) return res.status(400).json({ message: "Current password is incorrect" });
-  if (!newPassword || newPassword.length < 6) return res.status(400).json({ message: "New password must be at least 6 characters" });
-  const hashed = await bcrypt.hash(newPassword, 10);
-  await pool.query("UPDATE users SET password = ? WHERE id = ?", [hashed, req.user.id]);
+  if (!newPassword || newPassword.length < 8) {
+    return res.status(400).json({ message: "New password must be at least 8 characters" });
+  }
+  const hashed = await bcrypt.hash(newPassword, 12);
+  // Stamping the change is what lets auth reject sessions opened with the old password.
+  await pool.query("UPDATE users SET password = ?, password_changed_at = NOW() WHERE id = ?", [hashed, req.user.id]);
   res.json({ message: "Password changed successfully" });
 };
 
+// Deliberately identical whether or not the address is registered, so this can't be used
+// to find out who has an account.
+const RESET_REQUESTED_MESSAGE =
+  "If that email has an account, a reset link is on its way. The link expires in 30 minutes.";
+
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ message: "Email is required" });
+
+  const created = await createResetToken(email, req.ip);
+
+  if (created) {
+    const base = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "http://localhost:8080")
+      .split(",")[0]
+      .trim();
+    const resetUrl = `${base}/reset-password?token=${encodeURIComponent(created.token)}`;
+
+    try {
+      await sendPasswordResetEmail({
+        to: created.user.email,
+        name: created.user.name,
+        resetUrl,
+        expiresInMinutes: created.expiresInMinutes,
+      });
+    } catch (error) {
+      // Log for the operator, but don't tell the caller - the response has to look the
+      // same for every address regardless of what happened behind it.
+      console.error("Password reset email failed:", error.message);
+    }
+  }
+
+  res.json({ message: RESET_REQUESTED_MESSAGE, emailConfigured: isMailerConfigured });
+};
+
 exports.resetPassword = async (req, res) => {
-  // Matched on email alone for the same reason as login - otherwise an admin, who has no
-  // button on the forgot-password form, could never reset their own password.
-  const { email, newPassword } = req.body;
-  if (!email || !newPassword) return res.status(400).json({ message: "Missing required fields" });
-  if (newPassword.length < 6) return res.status(400).json({ message: "New password must be at least 6 characters" });
-  const hashed = await bcrypt.hash(newPassword, 10);
-  const [result] = await pool.query("UPDATE users SET password = ? WHERE email = ?", [hashed, email.trim().toLowerCase()]);
-  if (!result.affectedRows) return res.status(404).json({ message: "No account found with this email" });
-  res.json({ message: "Password reset successfully" });
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) return res.status(400).json({ message: "Reset link and new password are required" });
+  if (newPassword.length < 8) {
+    return res.status(400).json({ message: "New password must be at least 8 characters" });
+  }
+
+  const hashed = await bcrypt.hash(newPassword, 12);
+  const result = await consumeResetToken(token, hashed);
+
+  if (!result.ok) {
+    // One message for invalid / already used / expired: telling them apart would let
+    // someone probe which tokens once existed.
+    return res.status(400).json({ message: "This reset link is invalid or has expired. Please request a new one." });
+  }
+
+  res.json({ message: "Password updated. Please sign in with your new password." });
 };

@@ -4,8 +4,8 @@ import { ArrowLeft, Building2 } from "lucide-react";
 import { DepartmentList } from "@/components/faculty/DepartmentList";
 import { Button } from "@/components/ui/button";
 import { getFacultyById } from "@/data/faculties";
-import campusBg from "@/assets/rupp-campus-bg.png";
-import schoolLogo from "@/assets/school-logo.png";
+import campusBg from "@/assets/rupp-campus-bg.webp";
+import schoolLogo from "@/assets/school-logo.webp";
 
 export default function FacultyDetail() {
   const { facultyId } = useParams();

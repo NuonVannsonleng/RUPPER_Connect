@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   UserCog,
 } from "lucide-react";
-import schoolLogo from "@/assets/school-logo.png";
+import schoolLogo from "@/assets/school-logo.webp";
 
 import {
   Sidebar,

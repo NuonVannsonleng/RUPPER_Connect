@@ -2,6 +2,21 @@ const bcrypt = require("bcryptjs");
 const pool = require("./db");
 
 /**
+ * Tracks when each account's password last changed, so sessions opened with the previous
+ * one can be refused (see middleware/auth.js). MySQL has no ADD COLUMN IF NOT EXISTS, so
+ * check information_schema first.
+ */
+async function ensurePasswordChangedColumn() {
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS total FROM information_schema.columns
+     WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'password_changed_at'`
+  );
+  if (Number(rows[0].total) === 0) {
+    await pool.query("ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL");
+  }
+}
+
+/**
  * Promotes the account named by ADMIN_EMAIL to admin on boot.
  *
  * Public signup refuses the admin role on purpose, and on a hosted database you usually
@@ -41,4 +56,4 @@ async function bootstrapAdmin() {
   return { created: true, email };
 }
 
-module.exports = { bootstrapAdmin };
+module.exports = { bootstrapAdmin, ensurePasswordChangedColumn };

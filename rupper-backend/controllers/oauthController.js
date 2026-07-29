@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const pool = require("../config/db");
+const { jwtSecret } = require("../config/secrets");
 
 const allowedFrontends = () =>
   (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "http://localhost:8080")
@@ -24,7 +25,7 @@ const publicUser = (u) => ({
 });
 
 const makeToken = (user) =>
-  jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET || "dev_secret", {
+  jwt.sign({ id: user.id, role: user.role }, jwtSecret, {
     expiresIn: "7d",
   });
 
@@ -146,7 +147,7 @@ exports.startOAuth = async (req, res) => {
   const redirectUri = `${getBackendUrl(req)}/api/auth/oauth/${providerName}/callback`;
   const state = jwt.sign(
     { provider: providerName, role, rememberMe, frontendOrigin },
-    process.env.JWT_SECRET || "dev_secret",
+    jwtSecret,
     { expiresIn: "10m" }
   );
 
@@ -182,7 +183,7 @@ exports.handleOAuthCallback = async (req, res) => {
 
   let state;
   try {
-    state = jwt.verify(stateToken, process.env.JWT_SECRET || "dev_secret");
+    state = jwt.verify(stateToken, jwtSecret);
   } catch {
     return redirectWithError(res, getFrontendOrigin(), "OAuth session expired. Please try again.");
   }

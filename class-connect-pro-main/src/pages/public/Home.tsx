@@ -10,8 +10,8 @@ import {
 import { FacultyCard } from "@/components/faculty/FacultyCard";
 import { ThemeModeToggle } from "@/components/shared/ThemeModeToggle";
 import { faculties } from "@/data/faculties";
-import campusBg from "@/assets/rupp-campus-bg.png";
-import schoolLogo from "@/assets/school-logo.png";
+import campusBg from "@/assets/rupp-campus-bg.webp";
+import schoolLogo from "@/assets/school-logo.webp";
 
 const navLinks = [
   { label: "Home", href: "#home" },

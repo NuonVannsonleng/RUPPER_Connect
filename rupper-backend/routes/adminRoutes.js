@@ -12,6 +12,7 @@ router.get("/stats", asyncHandler(c.getStats));
 router.get("/users", asyncHandler(c.getUsers));
 router.post("/users", asyncHandler(c.createUser));
 router.put("/users/:id/role", asyncHandler(c.updateUserRole));
+router.put("/users/:id/password", asyncHandler(c.setUserPassword));
 router.delete("/users/:id", asyncHandler(c.deleteUser));
 
 router.get("/courses", asyncHandler(c.getCourses));

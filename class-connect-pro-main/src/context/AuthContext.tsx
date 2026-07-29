@@ -61,7 +61,8 @@ interface AuthContextValue {
   completeOAuthLogin: (token: string, rememberMe?: boolean) => Promise<boolean>;
   signup: (name: string, email: string, password: string, role: UserRole) => Promise<SignupResult>;
   logout: () => void;
-  resetPassword: (email: string, newPassword: string) => Promise<boolean>;
+  requestPasswordReset: (email: string) => Promise<{ ok: boolean; message?: string; emailConfigured?: boolean }>;
+  resetPasswordWithToken: (token: string, newPassword: string) => Promise<{ ok: boolean; message?: string }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
   updateProfile: (updates: Partial<AuthUser>) => Promise<boolean>;
 }
@@ -198,15 +199,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const resetPassword = async (email: string, newPassword: string) => {
+  // Step one: ask for a link. The reply is intentionally the same whether or not the
+  // address is registered, so there's nothing here to distinguish the two cases.
+  const requestPasswordReset = async (email: string) => {
     try {
-      await apiRequest<{ message: string }>("/auth/reset-password", {
+      const data = await apiRequest<{ message: string; emailConfigured: boolean }>("/auth/forgot-password", {
         method: "POST",
-        body: JSON.stringify({ email, newPassword }),
+        body: JSON.stringify({ email }),
       });
-      return true;
-    } catch {
-      return false;
+      return { ok: true, message: data.message, emailConfigured: data.emailConfigured };
+    } catch (error) {
+      return { ok: false, message: messageOf(error) };
+    }
+  };
+
+  // Step two: redeem the token from the emailed link.
+  const resetPasswordWithToken = async (token: string, newPassword: string) => {
+    try {
+      const data = await apiRequest<{ message: string }>("/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ token, newPassword }),
+      });
+      return { ok: true, message: data.message };
+    } catch (error) {
+      return { ok: false, message: messageOf(error) };
     }
   };
 
@@ -254,7 +270,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         completeOAuthLogin,
         signup,
         logout,
-        resetPassword,
+        requestPasswordReset,
+        resetPasswordWithToken,
         changePassword,
         updateProfile,
       }}
