@@ -9,6 +9,7 @@ import { RoleProvider } from "@/context/RoleContext";
 import { AuthProvider } from "@/context/AuthContext";
 import AppLayout from "@/components/layout/AppLayout";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import GuestRoute from "@/components/auth/GuestRoute";
 import { RouteTransition } from "@/components/shared/RouteTransition";
 
 // Pages are grouped by who they belong to: public/ needs no account, user/ is shared by
@@ -74,10 +75,14 @@ const App = () => (
             <BrowserRouter>
               <RouteTransition>
                 <Routes>
-                  {/* Public routes */}
-                  <Route path="/" element={<Home />} />
-                  <Route path="/login" element={<Login />} />
-                  <Route path="/signup" element={<Signup />} />
+                  {/* Public routes. The first three send you on to your dashboard if you
+                      already have a session - being asked to sign in again when you are
+                      signed in is the thing that made the landing page feel like a wall. */}
+                  <Route path="/" element={<GuestRoute><Home /></GuestRoute>} />
+                  <Route path="/login" element={<GuestRoute><Login /></GuestRoute>} />
+                  <Route path="/signup" element={<GuestRoute><Signup /></GuestRoute>} />
+
+                  {/* Deliberately not guest-only: a stale session shouldn't block a reset. */}
                   <Route path="/forgot-password" element={<ForgotPassword />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
                   <Route path="/oauth/callback" element={<OAuthCallback />} />

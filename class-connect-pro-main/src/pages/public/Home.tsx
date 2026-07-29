@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
+  ChevronDown,
   Facebook,
   Linkedin,
   Mail,
@@ -27,7 +29,12 @@ const supportItems = [
   "Central announcements and schedules",
 ];
 
+/** How many faculty cards a phone shows before asking. */
+const MOBILE_FACULTY_PREVIEW = 4;
+
 const Home = () => {
+  const [showAllFaculties, setShowAllFaculties] = useState(false);
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="relative z-50 border-b border-border/60 bg-background/95 shadow-sm backdrop-blur-xl md:fixed md:inset-x-0 md:top-0">
@@ -148,11 +155,31 @@ const Home = () => {
             </p>
           </div>
 
+          {/* All eight show at once from md up, where they sit two or four to a row. On a
+              phone they stack into one very long column - over half the page - so only the
+              first few are shown until asked for. Purely a CSS reveal, so nothing is hidden
+              from search engines or screen readers that read the whole document. */}
           <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-            {faculties.map((faculty) => (
-              <FacultyCard key={faculty.id} faculty={faculty} />
+            {faculties.map((faculty, index) => (
+              <div
+                key={faculty.id}
+                className={!showAllFaculties && index >= MOBILE_FACULTY_PREVIEW ? "hidden md:block" : ""}
+              >
+                <FacultyCard faculty={faculty} />
+              </div>
             ))}
           </div>
+
+          {!showAllFaculties && faculties.length > MOBILE_FACULTY_PREVIEW && (
+            <button
+              type="button"
+              onClick={() => setShowAllFaculties(true)}
+              className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-full border border-primary/30 bg-background px-6 py-3 text-sm font-bold text-primary transition-base hover:-translate-y-0.5 hover:border-primary hover:shadow-soft md:hidden"
+            >
+              Show all {faculties.length} faculties
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </section>
 
