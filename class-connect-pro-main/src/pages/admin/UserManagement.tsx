@@ -193,7 +193,13 @@ export default function UserManagement() {
               </p>
               {mail.error && (
                 <p className="mt-1 break-words text-sm text-muted-foreground">
-                  {mail.host ? `${mail.host}:${mail.port} - ` : ""}
+                  {mail.provider !== "none" && (
+                    <span className="font-medium capitalize">
+                      {mail.provider}
+                      {mail.host ? ` (${mail.host}:${mail.port})` : ""}
+                      {" - "}
+                    </span>
+                  )}
                   {mail.error}
                 </p>
               )}

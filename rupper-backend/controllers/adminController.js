@@ -1,6 +1,6 @@
 const bcrypt = require("bcryptjs");
 const pool = require("../config/db");
-const { verifyMailer, isMailerConfigured, mailerFrom } = require("../services/mailer");
+const { verifyMailer, isMailerConfigured, mailerFrom, mailerProvider } = require("../services/mailer");
 
 const ASSIGNABLE_ROLES = ["student", "teacher", "admin"];
 
@@ -177,15 +177,15 @@ exports.emailDiagnostics = async (req, res) => {
 
   res.json({
     configured: isMailerConfigured,
+    provider: mailerProvider,
     from: mailerFrom || null,
-    host: process.env.SMTP_HOST || null,
-    port: Number(process.env.SMTP_PORT || 587),
+    // Only meaningful for SMTP; the HTTP providers post to their own endpoint.
+    host: mailerProvider === "smtp" ? process.env.SMTP_HOST || null : null,
+    port: mailerProvider === "smtp" ? Number(process.env.SMTP_PORT || 587) : null,
     ok: result.ok,
     error: result.ok ? null : result.reason,
     code: result.ok ? null : result.code || null,
-    hint: result.ok
-      ? null
-      : buildHint(result),
+    hint: result.ok ? null : buildHint(result),
   });
 };
 
@@ -193,12 +193,27 @@ const buildHint = (result) => {
   const code = String(result.code || "");
   const reason = String(result.reason || "").toLowerCase();
 
-  if (!isMailerConfigured) return "Set SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD, then redeploy.";
+  if (!isMailerConfigured) {
+    return "No provider is set. The most reliable option is BREVO_API_KEY or RESEND_API_KEY - they send over HTTPS, which hosting platforms don't block. SMTP_HOST/SMTP_USER/SMTP_PASSWORD also works where outbound SMTP is allowed.";
+  }
+
+  if (!mailerFrom) {
+    return "Set MAIL_FROM to the sender address you verified with your provider.";
+  }
+
+  if (mailerProvider === "brevo" || mailerProvider === "resend") {
+    if (code.startsWith("HTTP_4")) {
+      return `The ${mailerProvider} API key was rejected. Check it was copied whole, and that MAIL_FROM is an address you have verified with ${mailerProvider}.`;
+    }
+    return `Could not reach ${mailerProvider}. Check the API key and that the service is reachable from this host.`;
+  }
+
+  // SMTP-specific causes.
   if (code === "ETIMEDOUT" || code === "ESOCKET" || reason.includes("timeout")) {
-    return "The connection timed out, which usually means outbound SMTP is blocked on this port. Try SMTP_PORT=465, and if that also fails use an HTTP email API (Resend, Brevo, SendGrid) instead of SMTP.";
+    return "The connection timed out, which almost always means this host blocks outbound SMTP. Try SMTP_PORT=465; if that also times out, switch to BREVO_API_KEY or RESEND_API_KEY, which send over HTTPS and cannot be blocked this way.";
   }
   if (code === "EAUTH" || reason.includes("username and password") || reason.includes("credentials")) {
-    return "Authentication was rejected. With Gmail you need 2-Step Verification on and a 16-character App Password - your normal password will not work.";
+    return "The login was rejected. With Gmail you need 2-Step Verification enabled and a 16-character App Password with the spaces removed - your normal password will not work.";
   }
   if (reason.includes("self signed") || reason.includes("certificate")) {
     return "TLS certificate problem. Check SMTP_HOST is spelled correctly and matches the provider's certificate.";

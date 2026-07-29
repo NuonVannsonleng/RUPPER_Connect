@@ -55,9 +55,10 @@ export const ADMIN_EMAIL_DIAGNOSTICS_QUERY_KEY = ["admin", "email-diagnostics"] 
 
 export interface EmailDiagnostics {
   configured: boolean;
+  provider: "brevo" | "resend" | "smtp" | "none";
   from: string | null;
   host: string | null;
-  port: number;
+  port: number | null;
   ok: boolean;
   error: string | null;
   code: string | null;
