@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Loader2, Plus, Search, Trash2, UserCog, Users } from "lucide-react";
+import { KeyRound, Loader2, MailWarning, Plus, Search, Trash2, UserCog, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -26,7 +26,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth, type UserRole } from "@/context/AuthContext";
-import { ADMIN_STATS_QUERY_KEY, ADMIN_USERS_QUERY_KEY, useAdminUsers, type AdminUser } from "@/hooks/useAdmin";
+import {
+  ADMIN_STATS_QUERY_KEY,
+  ADMIN_USERS_QUERY_KEY,
+  useAdminUsers,
+  useEmailDiagnostics,
+  type AdminUser,
+} from "@/hooks/useAdmin";
 import { apiRequest } from "@/lib/api";
 
 const roleTone: Record<string, string> = {
@@ -49,6 +55,7 @@ export default function UserManagement() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { data: users = [], isFetching, isError, error, refetch } = useAdminUsers();
+  const { data: mail } = useEmailDiagnostics();
 
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | UserRole>("all");
@@ -173,6 +180,31 @@ export default function UserManagement() {
       />
 
       {isFetching && <SyncStatus label="accounts" />}
+
+      {/* Reset mails go out in the background and the public form says the same thing
+          whatever happens, so without this a broken mail setup is silent. */}
+      {mail && !mail.ok && (
+        <Card className="mb-6 border-warning/40 bg-warning/5 p-4 shadow-soft">
+          <div className="flex items-start gap-3">
+            <MailWarning className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+            <div className="min-w-0">
+              <p className="font-semibold text-foreground">
+                {mail.configured ? "Password reset emails are not sending" : "Password reset emails are not set up"}
+              </p>
+              {mail.error && (
+                <p className="mt-1 break-words text-sm text-muted-foreground">
+                  {mail.host ? `${mail.host}:${mail.port} - ` : ""}
+                  {mail.error}
+                </p>
+              )}
+              {mail.hint && <p className="mt-2 text-sm leading-6 text-foreground">{mail.hint}</p>}
+              <p className="mt-2 text-xs text-muted-foreground">
+                Until this works, use the key icon beside an account to set a password directly.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <Card className="mb-6 border-border/60 p-4 shadow-soft">
         <div className="flex flex-col gap-3 sm:flex-row">

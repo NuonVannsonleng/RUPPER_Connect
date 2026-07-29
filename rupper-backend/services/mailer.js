@@ -25,7 +25,23 @@ if (isConfigured) {
     port,
     secure: port === 465,
     auth: { user, pass },
+    // Without these a blocked outbound port doesn't fail - it just hangs, and every send
+    // sits there forever. Hosts commonly filter SMTP, so fail in seconds and say why.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
+}
+
+/** Proves the SMTP settings actually work, surfacing the real error instead of a hang. */
+async function verifyMailer() {
+  if (!isConfigured) return { ok: false, reason: "SMTP is not configured (SMTP_HOST, SMTP_USER and SMTP_PASSWORD)." };
+  try {
+    await transporter.verify();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: error.message, code: error.code };
+  }
 }
 
 async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinutes }) {
@@ -66,4 +82,4 @@ async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinutes }) 
   return { delivered: true, messageId: info.messageId, previewUrl: nodemailer.getTestMessageUrl(info) || undefined };
 }
 
-module.exports = { sendPasswordResetEmail, isMailerConfigured: isConfigured };
+module.exports = { sendPasswordResetEmail, verifyMailer, isMailerConfigured: isConfigured, mailerFrom: from };

@@ -123,18 +123,19 @@ exports.forgotPassword = async (req, res) => {
       .trim();
     const resetUrl = `${base}/reset-password?token=${encodeURIComponent(created.token)}`;
 
-    try {
-      await sendPasswordResetEmail({
-        to: created.user.email,
-        name: created.user.name,
-        resetUrl,
-        expiresInMinutes: created.expiresInMinutes,
-      });
-    } catch (error) {
-      // Log for the operator, but don't tell the caller - the response has to look the
-      // same for every address regardless of what happened behind it.
-      console.error("Password reset email failed:", error.message);
-    }
+    // Deliberately not awaited. Handing the mail off in the background keeps the reply
+    // instant; waiting on the SMTP round trip made the form sit on "Sending..." for as long
+    // as delivery took, and hang outright when the connection was being filtered. It also
+    // removes a timing signal - a registered address took visibly longer than an unknown
+    // one, which quietly undid the point of the identical wording below.
+    sendPasswordResetEmail({
+      to: created.user.email,
+      name: created.user.name,
+      resetUrl,
+      expiresInMinutes: created.expiresInMinutes,
+    }).catch((error) => {
+      console.error(`Password reset email to ${created.user.email} failed:`, error.message);
+    });
   }
 
   res.json({ message: RESET_REQUESTED_MESSAGE, emailConfigured: isMailerConfigured });

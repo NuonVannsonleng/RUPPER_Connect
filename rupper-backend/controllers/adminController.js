@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const pool = require("../config/db");
+const { verifyMailer, isMailerConfigured, mailerFrom } = require("../services/mailer");
 
 const ASSIGNABLE_ROLES = ["student", "teacher", "admin"];
 
@@ -166,6 +167,43 @@ exports.setUserPassword = async (req, res) => {
   ]);
 
   res.json({ message: `Password updated for ${target[0].name}. They will need to sign in again.` });
+};
+
+exports.emailDiagnostics = async (req, res) => {
+  // Reset emails are sent in the background and the public endpoint deliberately says the
+  // same thing whatever happens, so a broken mail setup is otherwise invisible without
+  // server logs. This gives an admin a straight answer.
+  const result = await verifyMailer();
+
+  res.json({
+    configured: isMailerConfigured,
+    from: mailerFrom || null,
+    host: process.env.SMTP_HOST || null,
+    port: Number(process.env.SMTP_PORT || 587),
+    ok: result.ok,
+    error: result.ok ? null : result.reason,
+    code: result.ok ? null : result.code || null,
+    hint: result.ok
+      ? null
+      : buildHint(result),
+  });
+};
+
+const buildHint = (result) => {
+  const code = String(result.code || "");
+  const reason = String(result.reason || "").toLowerCase();
+
+  if (!isMailerConfigured) return "Set SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD, then redeploy.";
+  if (code === "ETIMEDOUT" || code === "ESOCKET" || reason.includes("timeout")) {
+    return "The connection timed out, which usually means outbound SMTP is blocked on this port. Try SMTP_PORT=465, and if that also fails use an HTTP email API (Resend, Brevo, SendGrid) instead of SMTP.";
+  }
+  if (code === "EAUTH" || reason.includes("username and password") || reason.includes("credentials")) {
+    return "Authentication was rejected. With Gmail you need 2-Step Verification on and a 16-character App Password - your normal password will not work.";
+  }
+  if (reason.includes("self signed") || reason.includes("certificate")) {
+    return "TLS certificate problem. Check SMTP_HOST is spelled correctly and matches the provider's certificate.";
+  }
+  return "Check SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD against your provider's documentation.";
 };
 
 exports.getCourses = async (req, res) => {

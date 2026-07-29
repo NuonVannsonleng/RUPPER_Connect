@@ -8,6 +8,7 @@ const c = require("../controllers/adminController");
 router.use(auth, requireAdmin);
 
 router.get("/stats", asyncHandler(c.getStats));
+router.get("/email-diagnostics", asyncHandler(c.emailDiagnostics));
 
 router.get("/users", asyncHandler(c.getUsers));
 router.post("/users", asyncHandler(c.createUser));

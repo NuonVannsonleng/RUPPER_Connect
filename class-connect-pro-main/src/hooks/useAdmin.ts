@@ -51,6 +51,28 @@ const EMPTY_STATS: AdminStats = {
   recentUsers: [],
 };
 
+export const ADMIN_EMAIL_DIAGNOSTICS_QUERY_KEY = ["admin", "email-diagnostics"] as const;
+
+export interface EmailDiagnostics {
+  configured: boolean;
+  from: string | null;
+  host: string | null;
+  port: number;
+  ok: boolean;
+  error: string | null;
+  code: string | null;
+  hint: string | null;
+}
+
+export function useEmailDiagnostics() {
+  return useQuery({
+    queryKey: ADMIN_EMAIL_DIAGNOSTICS_QUERY_KEY,
+    queryFn: () => apiRequest<EmailDiagnostics>("/admin/email-diagnostics"),
+    // Verifying opens a real SMTP connection, so don't refire it on every visit.
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useAdminStats() {
   return useQuery({
     queryKey: ADMIN_STATS_QUERY_KEY,
