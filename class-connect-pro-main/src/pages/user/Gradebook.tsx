@@ -164,7 +164,7 @@ export default function Gradebook() {
         title="Gradebook"
         description="Click any cell to update a student's score. Averages recalculate live and Save writes to the backend."
         actions={
-          <Button onClick={handleSave} className="bg-gradient-primary text-primary-foreground hover:opacity-95" disabled={isSaving || !draft}>
+          <Button size="sm" variant="secondary" className="font-semibold" onClick={handleSave} disabled={isSaving || !draft}>
             <Save className="mr-2 h-4 w-4" />
             {isSaving ? "Saving..." : "Save"}
           </Button>

@@ -299,7 +299,7 @@ export default function Attendance() {
                 className="h-10 w-44 bg-background pl-9 text-foreground [color-scheme:light] dark:[color-scheme:dark]"
               />
             </div>
-            <Button onClick={handleSave} className="bg-gradient-primary text-primary-foreground hover:opacity-95" disabled={isSaving}>
+            <Button size="sm" variant="secondary" className="font-semibold" onClick={handleSave} disabled={isSaving}>
               <Save className="mr-2 h-4 w-4" />
               {isSaving ? "Saving..." : "Save"}
             </Button>

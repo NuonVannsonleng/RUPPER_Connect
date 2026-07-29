@@ -190,7 +190,7 @@ export default function Schedule() {
         }
         actions={
           role === "teacher" ? (
-            <Button onClick={openCreate} className="bg-gradient-primary text-primary-foreground hover:opacity-95">
+            <Button size="sm" variant="secondary" className="font-semibold" onClick={openCreate}>
               <Plus className="mr-1.5 h-4 w-4" />
               New class
             </Button>
