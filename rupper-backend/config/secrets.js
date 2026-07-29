@@ -14,29 +14,30 @@ const configured = (process.env.JWT_SECRET || "").trim();
 
 const INSECURE = new Set(["dev_secret", "change_this_to_a_long_secret_key", "secret", "changeme"]);
 
+const GENERATE_HINT =
+  "Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\"";
+
 function resolveJwtSecret() {
   if (configured && !INSECURE.has(configured) && configured.length >= 32) return configured;
 
-  if (isProduction) {
-    const why = !configured
-      ? "JWT_SECRET is not set"
-      : INSECURE.has(configured)
-        ? "JWT_SECRET is still one of the placeholder values"
-        : "JWT_SECRET is shorter than 32 characters";
-    throw new Error(
-      `Refusing to start: ${why}. Anyone who knows the value can mint a token for any ` +
-        "account. Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\""
-    );
-  }
+  const why = !configured
+    ? "JWT_SECRET is not set"
+    : INSECURE.has(configured)
+      ? "JWT_SECRET is still one of the placeholder values"
+      : "JWT_SECRET is shorter than 32 characters";
 
-  if (configured) {
-    console.warn(
-      "JWT_SECRET is weak or a placeholder. Fine locally, but production will refuse to start until it is a random 32+ character value."
-    );
-    return configured;
-  }
+  // Never fall back to a guessable value - that was the original bug, and a known secret
+  // lets anyone mint a token for any account. But refusing to boot takes the whole site
+  // down over a config problem, so instead generate a strong random secret and complain
+  // loudly. The app stays up and stays safe; the only cost is that sessions don't survive a
+  // restart, which is a far better failure than a 502.
+  const message = isProduction
+    ? `${why}. Running on a random secret generated at startup, so everyone will be signed out every time this service restarts. Set JWT_SECRET to fix it. ${GENERATE_HINT}`
+    : `${why}. Using a random development secret - logins will not survive a restart. ${GENERATE_HINT}`;
 
-  console.warn("JWT_SECRET is not set. Using a random development secret - logins will not survive a restart.");
+  if (isProduction) console.error(`SECURITY: ${message}`);
+  else console.warn(message);
+
   return crypto.randomBytes(48).toString("base64url");
 }
 
