@@ -42,13 +42,24 @@ interface AuthResponse {
   user: AuthUser;
 }
 
+/** `error` carries the API's own message so the form can say what actually went wrong. */
+export interface LoginResult {
+  user: AuthUser | null;
+  error?: string;
+}
+
+export interface SignupResult {
+  ok: boolean;
+  error?: string;
+}
+
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string, rememberMe?: boolean) => Promise<AuthUser | null>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<LoginResult>;
   startOAuthLogin: (provider: OAuthProvider, role: UserRole, rememberMe?: boolean) => void;
   completeOAuthLogin: (token: string, rememberMe?: boolean) => Promise<boolean>;
-  signup: (name: string, email: string, password: string, role: UserRole) => Promise<boolean>;
+  signup: (name: string, email: string, password: string, role: UserRole) => Promise<SignupResult>;
   logout: () => void;
   resetPassword: (email: string, newPassword: string) => Promise<boolean>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
@@ -59,6 +70,9 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const STORAGE_KEY = "app_auth_user";
 const REMEMBER_KEY = "app_auth_remember";
 const LEGACY_USERS_KEY = "app_auth_users";
+
+/** apiRequest throws Error(message) built from the API's JSON body. */
+const messageOf = (error: unknown) => (error instanceof Error && error.message ? error.message : undefined);
 
 const safeParse = <T,>(value: string | null, fallback: T): T => {
   try {
@@ -135,15 +149,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         body: JSON.stringify({ name, email, password, role }),
       });
       persistSession(data.user, data.token, true);
-      return true;
-    } catch {
-      return false;
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: messageOf(error) };
     }
   };
 
-  // Returns the signed-in account (so the caller can route by its real role) or null.
-  // No role argument: the server authenticates on the credentials and tells us what the
-  // account actually is, which is how admins sign in without a button on the form.
+  // Returns the signed-in account (so the caller can route by its real role), plus the
+  // server's own message when it fails. Collapsing every failure into "wrong password"
+  // hid a real outage once: the API was rejecting the request outright and the form still
+  // blamed the user's credentials.
   const login = async (email: string, password: string, rememberMe = true) => {
     try {
       const data = await apiRequest<AuthResponse>("/auth/login", {
@@ -151,9 +166,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         body: JSON.stringify({ email, password }),
       });
       persistSession(data.user, data.token, rememberMe);
-      return data.user;
-    } catch {
-      return null;
+      return { user: data.user };
+    } catch (error) {
+      return { user: null, error: messageOf(error) };
     }
   };
 

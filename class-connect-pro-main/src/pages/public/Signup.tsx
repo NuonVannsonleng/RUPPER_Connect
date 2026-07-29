@@ -28,14 +28,16 @@ export default function Signup() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    const ok = await signup(name, email, password, role);
+    const { ok, error } = await signup(name, email, password, role);
     setIsSubmitting(false);
 
     if (ok) {
       toast.success(`Account created! Welcome, ${name}`);
       navigate("/dashboard");
     } else {
-      toast.error("An account with this email already exists");
+      // Every failure used to claim the email was taken, including a password that was
+      // too short or the API being unreachable.
+      toast.error(error || "Could not create your account. Please try again.");
     }
   };
 

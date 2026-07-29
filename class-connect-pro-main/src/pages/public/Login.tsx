@@ -32,7 +32,7 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    const account = await login(email, password, rememberMe);
+    const { user: account, error } = await login(email, password, rememberMe);
     setIsSubmitting(false);
 
     if (account) {
@@ -41,7 +41,9 @@ export default function Login() {
       // admin area without the login form ever having to offer that choice.
       navigate(account.role === "admin" ? "/admin" : "/dashboard");
     } else {
-      toast.error("Invalid email or password");
+      // Show what the server said. Blanketing every failure as "wrong password" once sent
+      // someone hunting for a bad password when the API was actually rejecting the request.
+      toast.error(error || "Invalid email or password");
     }
   };
 
