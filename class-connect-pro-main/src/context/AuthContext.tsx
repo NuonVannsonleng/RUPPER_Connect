@@ -45,12 +45,12 @@ interface AuthResponse {
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string, role: UserRole, rememberMe?: boolean) => Promise<boolean>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<AuthUser | null>;
   startOAuthLogin: (provider: OAuthProvider, role: UserRole, rememberMe?: boolean) => void;
   completeOAuthLogin: (token: string, rememberMe?: boolean) => Promise<boolean>;
   signup: (name: string, email: string, password: string, role: UserRole) => Promise<boolean>;
   logout: () => void;
-  resetPassword: (email: string, role: UserRole, newPassword: string) => Promise<boolean>;
+  resetPassword: (email: string, newPassword: string) => Promise<boolean>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
   updateProfile: (updates: Partial<AuthUser>) => Promise<boolean>;
 }
@@ -141,16 +141,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const login = async (email: string, password: string, role: UserRole, rememberMe = true) => {
+  // Returns the signed-in account (so the caller can route by its real role) or null.
+  // No role argument: the server authenticates on the credentials and tells us what the
+  // account actually is, which is how admins sign in without a button on the form.
+  const login = async (email: string, password: string, rememberMe = true) => {
     try {
       const data = await apiRequest<AuthResponse>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password, role }),
+        body: JSON.stringify({ email, password }),
       });
       persistSession(data.user, data.token, rememberMe);
-      return true;
+      return data.user;
     } catch {
-      return false;
+      return null;
     }
   };
 
@@ -180,11 +183,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const resetPassword = async (email: string, role: UserRole, newPassword: string) => {
+  const resetPassword = async (email: string, newPassword: string) => {
     try {
       await apiRequest<{ message: string }>("/auth/reset-password", {
         method: "POST",
-        body: JSON.stringify({ email, role, newPassword }),
+        body: JSON.stringify({ email, newPassword }),
       });
       return true;
     } catch {

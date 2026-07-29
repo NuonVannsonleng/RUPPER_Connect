@@ -4,6 +4,7 @@ import { Loader2, Plus, Search, ShieldCheck, Trash2, UserCog, Users } from "luci
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/EmptyState";
+import { LoadError } from "@/components/shared/LoadError";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SyncStatus } from "@/components/shared/SyncStatus";
 import {
@@ -47,7 +48,7 @@ const emptyForm = { name: "", email: "", password: "", role: "student" as UserRo
 export default function UserManagement() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const { data: users = [], isFetching } = useAdminUsers();
+  const { data: users = [], isFetching, isError, error, refetch } = useAdminUsers();
 
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | UserRole>("all");
@@ -181,7 +182,11 @@ export default function UserManagement() {
           <Badge variant="secondary">{filtered.length} shown</Badge>
         </div>
 
-        {filtered.length === 0 ? (
+        {isError ? (
+          <div className="p-5">
+            <LoadError label="accounts" error={error} onRetry={() => refetch()} />
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="p-5">
             <EmptyState
               icon={Users}

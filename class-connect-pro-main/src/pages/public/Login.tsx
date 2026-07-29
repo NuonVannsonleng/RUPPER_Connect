@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, GraduationCap, LockKeyhole, Mail, ShieldCheck, UserRound } from "lucide-react";
+import { ArrowLeft, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 
 import { AuthTextField } from "@/components/auth/AuthTextField";
@@ -16,28 +16,32 @@ export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<UserRole>("student");
+  // Only used when a Google sign-in creates a brand new account; existing accounts keep
+  // whatever role they already have. Someone signing up as a teacher does so from /signup,
+  // which still asks.
+  const oauthDefaultRole: UserRole = "student";
   const [rememberMe, setRememberMe] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
 
   const handleSocialLogin = (provider: OAuthProvider, label: string) => {
     setActiveProvider(label);
-    startOAuthLogin(provider, role, rememberMe);
+    startOAuthLogin(provider, oauthDefaultRole, rememberMe);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    const ok = await login(email, password, role, rememberMe);
+    const account = await login(email, password, rememberMe);
     setIsSubmitting(false);
 
-    if (ok) {
+    if (account) {
       toast.success("Welcome back!");
-      // Login only succeeds when the selected role matches the account, so this is safe.
-      navigate(role === "admin" ? "/admin" : "/dashboard");
+      // Route by the role the account actually has, which is how admins land in the
+      // admin area without the login form ever having to offer that choice.
+      navigate(account.role === "admin" ? "/admin" : "/dashboard");
     } else {
-      toast.error("Invalid credentials or wrong role");
+      toast.error("Invalid email or password");
     }
   };
 
@@ -62,33 +66,10 @@ export default function Login() {
         </p>
       </div>
 
+      {/* No role picker here on purpose: the account already knows what it is, so signing
+          in needs only credentials. It also means admin never has to appear as a public
+          option - admins are designated by an existing admin or by ADMIN_EMAIL. */}
       <form onSubmit={handleSubmit} className="space-y-5">
-        <div className="space-y-2">
-          <Label className="text-sm font-semibold text-slate-900 dark:text-slate-100">I am a</Label>
-          <div className="grid grid-cols-3 gap-3">
-            {(["student", "teacher", "admin"] as const).map((item) => {
-              const Icon = item === "student" ? GraduationCap : item === "teacher" ? UserRound : ShieldCheck;
-              const active = role === item;
-
-              return (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setRole(item)}
-                  className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-bold capitalize shadow-sm backdrop-blur-md transition-base hover:-translate-y-0.5 ${
-                    active
-                      ? "border-primary/40 bg-primary text-primary-foreground shadow-glow"
-                      : "border-slate-200/80 bg-white/90 text-slate-700 hover:border-primary/30 hover:bg-white hover:text-slate-950 dark:border-white/10 dark:bg-slate-950/70 dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-slate-50"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {item}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
         <AuthTextField
           id="email"
           label="Email"

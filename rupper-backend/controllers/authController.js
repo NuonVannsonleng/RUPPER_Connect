@@ -40,15 +40,19 @@ exports.signup = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
-  const { email, password, role } = req.body;
-  if (!email || !password || !role) return res.status(400).json({ message: "Email, password, and role are required" });
+  // Sign-in is by email + password; the account's stored role is what counts. The role
+  // picker on the form used to have to match, which meant every role needed a button on
+  // the login page - including admin. A role isn't a secret, so requiring it added
+  // friction without adding security, and it kept admin from signing in quietly.
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ message: "Email and password are required" });
 
   const [rows] = await pool.query("SELECT * FROM users WHERE email = ?", [email.trim().toLowerCase()]);
   const found = rows[0];
-  if (!found || found.role !== role) return res.status(400).json({ message: "Invalid credentials or wrong role" });
+  if (!found) return res.status(400).json({ message: "Invalid email or password" });
 
   const ok = await bcrypt.compare(password, found.password);
-  if (!ok) return res.status(400).json({ message: "Invalid credentials or wrong role" });
+  if (!ok) return res.status(400).json({ message: "Invalid email or password" });
 
   res.json({ token: makeToken(found), user: publicUser(found) });
 };
@@ -97,11 +101,13 @@ exports.changePassword = async (req, res) => {
 };
 
 exports.resetPassword = async (req, res) => {
-  const { email, role, newPassword } = req.body;
-  if (!email || !role || !newPassword) return res.status(400).json({ message: "Missing required fields" });
+  // Matched on email alone for the same reason as login - otherwise an admin, who has no
+  // button on the forgot-password form, could never reset their own password.
+  const { email, newPassword } = req.body;
+  if (!email || !newPassword) return res.status(400).json({ message: "Missing required fields" });
   if (newPassword.length < 6) return res.status(400).json({ message: "New password must be at least 6 characters" });
   const hashed = await bcrypt.hash(newPassword, 10);
-  const [result] = await pool.query("UPDATE users SET password = ? WHERE email = ? AND role = ?", [hashed, email.trim().toLowerCase(), role]);
-  if (!result.affectedRows) return res.status(404).json({ message: "No account found with this email and role" });
+  const [result] = await pool.query("UPDATE users SET password = ? WHERE email = ?", [hashed, email.trim().toLowerCase()]);
+  if (!result.affectedRows) return res.status(404).json({ message: "No account found with this email" });
   res.json({ message: "Password reset successfully" });
 };

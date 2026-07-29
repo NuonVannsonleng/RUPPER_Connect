@@ -103,12 +103,11 @@ const findOrCreateUser = async ({ email, name, avatar, role }) => {
   const [existing] = await pool.query("SELECT * FROM users WHERE email = ?", [normalizedEmail]);
 
   if (existing.length) {
+    // Sign the account in as whatever it already is. `role` only decides what a brand new
+    // account gets created as - it used to have to match, which meant a teacher (or an
+    // admin) coming through the login page, where there is no role picker, was turned away
+    // with "already registered as teacher" instead of simply being signed in.
     const user = existing[0];
-    if (user.role !== role) {
-      const error = new Error(`This email is already registered as ${user.role}.`);
-      error.status = 409;
-      throw error;
-    }
 
     if ((avatar && !user.avatar) || (name && user.name !== name)) {
       await pool.query("UPDATE users SET name = ?, avatar = COALESCE(avatar, ?) WHERE id = ?", [

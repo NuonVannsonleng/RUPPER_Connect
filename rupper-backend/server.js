@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const getConnection = require("./db");
 const { dedupeSeedData } = require("./migrations/dedupeSeedData");
+const { bootstrapAdmin } = require("./config/bootstrapAdmin");
 const pool = getConnection();
 
 const app = express();
@@ -60,5 +61,20 @@ app.use((err, req, res, next) => {
 dedupeSeedData()
   .then((results) => console.log("Seed data dedupe check:", results))
   .catch((error) => console.error("Seed data dedupe check failed:", error.message));
+
+bootstrapAdmin()
+  .then((result) => {
+    if (result.skipped) return;
+    if (result.alreadyAdmin) console.log(`Admin bootstrap: ${result.email} is already an admin.`);
+    else if (result.promoted) console.log(`Admin bootstrap: promoted ${result.email} from ${result.from} to admin.`);
+    else if (result.created) console.log(`Admin bootstrap: created admin account ${result.email}.`);
+    else if (result.missing) {
+      console.warn(
+        `Admin bootstrap: no account for ADMIN_EMAIL=${result.email}. Sign up with that email first, ` +
+          "or set ADMIN_PASSWORD (6+ characters) to have it created here."
+      );
+    }
+  })
+  .catch((error) => console.error("Admin bootstrap failed:", error.message));
 
 app.listen(PORT, () => console.log(`RUPPER backend running on http://localhost:${PORT}`));

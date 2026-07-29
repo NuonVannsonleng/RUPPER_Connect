@@ -4,6 +4,7 @@ import { BookOpenCheck, Loader2, Search, UserCheck, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/EmptyState";
+import { LoadError } from "@/components/shared/LoadError";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { SyncStatus } from "@/components/shared/SyncStatus";
@@ -23,7 +24,7 @@ const UNASSIGNED = "unassigned";
 
 export default function CourseOversight() {
   const queryClient = useQueryClient();
-  const { data: courses = [], isFetching } = useAdminCourses();
+  const { data: courses = [], isFetching, isError, error, refetch } = useAdminCourses();
   const { data: users = [] } = useAdminUsers();
   const [search, setSearch] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -91,7 +92,9 @@ export default function CourseOversight() {
         </div>
       </Card>
 
-      {filtered.length === 0 ? (
+      {isError ? (
+        <LoadError label="courses" error={error} onRetry={() => refetch()} />
+      ) : filtered.length === 0 ? (
         <EmptyState
           icon={BookOpenCheck}
           title={courses.length === 0 ? "No courses yet" : "No courses match your search"}
