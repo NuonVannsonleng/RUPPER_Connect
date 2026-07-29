@@ -49,7 +49,7 @@ async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinutes }) 
     return { delivered: false, reason: "smtp-not-configured" };
   }
 
-  await transporter.sendMail({
+  const info = await transporter.sendMail({
     from,
     to,
     subject,
@@ -61,7 +61,9 @@ async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinutes }) 
 <p>If you didn't ask for this, you can ignore this email - your password stays as it is.</p>`,
   });
 
-  return { delivered: true };
+  // getTestMessageUrl only returns anything for throwaway test inboxes, which is handy when
+  // checking the template renders without mailing a real person.
+  return { delivered: true, messageId: info.messageId, previewUrl: nodemailer.getTestMessageUrl(info) || undefined };
 }
 
 module.exports = { sendPasswordResetEmail, isMailerConfigured: isConfigured };
