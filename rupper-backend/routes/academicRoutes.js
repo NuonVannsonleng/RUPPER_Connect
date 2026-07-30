@@ -22,6 +22,8 @@ router.post("/quizzes/:id/attempts", auth, asyncHandler(c.submitQuizAttempt));
 
 router.get("/calendar", auth, asyncHandler(c.getCalendarEvents));
 router.post("/calendar", auth, requireTeacher, asyncHandler(c.createCalendarEvent));
+router.put("/calendar/:id", auth, requireTeacher, asyncHandler(c.updateCalendarEvent));
+router.delete("/calendar/:id", auth, requireTeacher, asyncHandler(c.deleteCalendarEvent));
 
 router.get("/transcript", auth, asyncHandler(c.getTranscript));
 router.get("/risk-alerts", auth, asyncHandler(c.getRiskAlerts));

@@ -91,6 +91,7 @@ export interface AcademicCalendarEvent {
   date: string;
   type: CalendarEventType;
   course?: string;
+  courseId?: string;
   priority: PriorityLevel;
 }
 

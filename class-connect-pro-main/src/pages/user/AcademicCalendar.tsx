@@ -1,11 +1,21 @@
 import { useState } from "react";
-import { CalendarDays, CalendarRange, Clock, GraduationCap, PartyPopper, Plus } from "lucide-react";
+import { CalendarDays, CalendarRange, Clock, GraduationCap, Pencil, PartyPopper, Plus, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SyncStatus } from "@/components/shared/SyncStatus";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,8 +24,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRole } from "@/context/RoleContext";
+import type { AcademicCalendarEvent } from "@/data/academicPlatform";
 import { ACADEMIC_CALENDAR_QUERY_KEY, useAcademicCalendar, useAcademicCourses } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
+
+/** Plain YYYY-MM-DD for today in the viewer's local time zone - event dates are stored and
+ *  returned the same way, so this stays a safe string comparison with no timezone reinterpretation. */
+const todayIso = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
+
+const isPastEvent = (event: AcademicCalendarEvent) => event.date < todayIso();
 
 const typeIcon = {
   exam: GraduationCap,
@@ -43,17 +63,33 @@ export default function AcademicCalendar() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [eventForm, setEventForm] = useState(emptyEventForm);
   const [isCreating, setIsCreating] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<AcademicCalendarEvent | null>(null);
+  const [eventToDelete, setEventToDelete] = useState<AcademicCalendarEvent | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const counts = events.reduce<Record<string, number>>((total, event) => {
     total[event.type] = (total[event.type] || 0) + 1;
     return total;
   }, {});
 
   const openDialog = () => {
+    setEditingEvent(null);
     setEventForm(emptyEventForm);
     setDialogOpen(true);
   };
 
-  const createEvent = async () => {
+  const openEditDialog = (event: AcademicCalendarEvent) => {
+    setEditingEvent(event);
+    setEventForm({
+      title: event.title,
+      date: event.date,
+      type: event.type,
+      priority: event.priority,
+      courseId: event.courseId || NO_COURSE,
+    });
+    setDialogOpen(true);
+  };
+
+  const saveEvent = async () => {
     if (!eventForm.title.trim() || !eventForm.date) {
       toast.error("Title and date are required.");
       return;
@@ -61,23 +97,50 @@ export default function AcademicCalendar() {
 
     setIsCreating(true);
     try {
-      await apiRequest<{ message: string }>("/academic/calendar", {
-        method: "POST",
-        body: JSON.stringify({
-          title: eventForm.title.trim(),
-          date: eventForm.date,
-          type: eventForm.type,
-          priority: eventForm.priority,
-          courseId: eventForm.courseId === NO_COURSE ? undefined : eventForm.courseId,
-        }),
-      });
+      const payload = {
+        title: eventForm.title.trim(),
+        date: eventForm.date,
+        type: eventForm.type,
+        priority: eventForm.priority,
+        courseId: eventForm.courseId === NO_COURSE ? undefined : eventForm.courseId,
+      };
+
+      if (editingEvent) {
+        await apiRequest<{ message: string }>(`/academic/calendar/${editingEvent.id}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await apiRequest<{ message: string }>("/academic/calendar", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      }
       await queryClient.invalidateQueries({ queryKey: ACADEMIC_CALENDAR_QUERY_KEY });
-      toast.success("Calendar event created");
+      toast.success(editingEvent ? "Calendar event updated" : "Calendar event created");
       setDialogOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not create calendar event");
+      toast.error(
+        error instanceof Error ? error.message : editingEvent ? "Could not update calendar event" : "Could not create calendar event"
+      );
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const deleteEvent = async () => {
+    if (!eventToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      await apiRequest<{ message: string }>(`/academic/calendar/${eventToDelete.id}`, { method: "DELETE" });
+      await queryClient.invalidateQueries({ queryKey: ACADEMIC_CALENDAR_QUERY_KEY });
+      toast.success("Calendar event deleted");
+      setEventToDelete(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete calendar event");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -129,8 +192,14 @@ export default function AcademicCalendar() {
         <div className="divide-y divide-border">
           {events.map((event) => {
             const Icon = typeIcon[event.type];
+            const past = isPastEvent(event);
             return (
-              <div key={event.id} className="flex flex-col gap-4 p-5 transition-base hover:bg-secondary/30 sm:flex-row sm:items-center sm:justify-between">
+              <div
+                key={event.id}
+                className={`flex flex-col gap-4 p-5 transition-base hover:bg-secondary/30 sm:flex-row sm:items-center sm:justify-between ${
+                  past ? "opacity-70" : ""
+                }`}
+              >
                 <div className="flex items-start gap-4">
                   <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border ${typeTone[event.type]}`}>
                     <Icon className="h-5 w-5" />
@@ -143,9 +212,36 @@ export default function AcademicCalendar() {
                     </p>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {past && (
+                    <Badge variant="outline" className="border-border bg-secondary text-secondary-foreground">
+                      Past
+                    </Badge>
+                  )}
                   <Badge className={`border ${typeTone[event.type]}`}>{event.type}</Badge>
                   <Badge variant="outline">{event.priority}</Badge>
+                  {role === "teacher" && (
+                    <div className="ml-1 flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground"
+                        onClick={() => openEditDialog(event)}
+                        aria-label={`Edit ${event.title}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => setEventToDelete(event)}
+                        aria-label={`Delete ${event.title}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -156,7 +252,7 @@ export default function AcademicCalendar() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add calendar event</DialogTitle>
+            <DialogTitle>{editingEvent ? "Edit calendar event" : "Add calendar event"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div>
@@ -229,12 +325,33 @@ export default function AcademicCalendar() {
             <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={isCreating}>
               Cancel
             </Button>
-            <Button onClick={createEvent} className="bg-gradient-primary text-primary-foreground" disabled={isCreating}>
-              {isCreating ? "Creating..." : "Add event"}
+            <Button onClick={saveEvent} className="bg-gradient-primary text-primary-foreground" disabled={isCreating}>
+              {isCreating ? (editingEvent ? "Saving..." : "Creating...") : editingEvent ? "Save changes" : "Add event"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={Boolean(eventToDelete)} onOpenChange={(open) => !open && setEventToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete calendar event?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {eventToDelete ? `"${eventToDelete.title}" will be removed for everyone. This cannot be undone.` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={deleteEvent}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

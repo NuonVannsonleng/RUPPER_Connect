@@ -906,6 +906,7 @@ exports.getCalendarEvents = async (req, res) => {
       date: dateOnly(row.event_date),
       type: row.event_type,
       course: row.courseCode || undefined,
+      courseId: row.course_id ? String(row.course_id) : undefined,
       priority: row.priority || "normal",
     }))
   );
@@ -921,6 +922,32 @@ exports.createCalendarEvent = async (req, res) => {
     [title.trim(), date, type, courseId, priority || "normal", req.user.id]
   );
   res.status(201).json({ id: String(result.insertId), message: "Calendar event created" });
+};
+
+exports.updateCalendarEvent = async (req, res) => {
+  await ensureAcademicSchema();
+  const courseId = req.body.courseId ? await resolveCourseId(req.body.courseId) : null;
+  const { title, date, type, priority } = req.body;
+  if (!title || !date || !type) return res.status(400).json({ message: "title, date, and type are required" });
+
+  // Deliberately no event_date restriction here - a past event edits the same way an
+  // upcoming one does. This is a real UPDATE (not delete+recreate), so the row's id and
+  // created_at survive the edit and nothing downstream can mistake it for a new event.
+  const [result] = await pool.query(
+    "UPDATE academic_calendar_events SET title = ?, event_date = ?, event_type = ?, course_id = ?, priority = ? WHERE id = ?",
+    [title.trim(), date, type, courseId, priority || "normal", req.params.id]
+  );
+  if (!result.affectedRows) return res.status(404).json({ message: "Calendar event not found" });
+
+  res.json({ message: "Calendar event updated" });
+};
+
+exports.deleteCalendarEvent = async (req, res) => {
+  await ensureAcademicSchema();
+  const [result] = await pool.query("DELETE FROM academic_calendar_events WHERE id = ?", [req.params.id]);
+  if (!result.affectedRows) return res.status(404).json({ message: "Calendar event not found" });
+
+  res.json({ message: "Calendar event deleted" });
 };
 
 exports.getTranscript = async (req, res) => {
