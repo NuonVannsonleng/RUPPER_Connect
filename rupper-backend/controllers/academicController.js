@@ -249,6 +249,24 @@ const ensureAcademicSchemaLocked = async () => {
     await pool.query(`ALTER TABLE course_materials ${clauses}`);
   }
 
+  // Same story for assignment_submissions: it originally only had file_url, which never
+  // actually got a real file behind it. Give it the same blob columns as course_materials.
+  const submissionColumns = {
+    file_name: "VARCHAR(255) NULL",
+    file_mime: "VARCHAR(150) NULL",
+    file_data: "LONGBLOB NULL",
+    file_size: "INT NULL",
+  };
+  const [existingSubmissionColumns] = await pool.query(
+    "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'assignment_submissions'"
+  );
+  const existingSubmissionNames = new Set(existingSubmissionColumns.map((row) => row.COLUMN_NAME));
+  const missingSubmissionColumns = Object.entries(submissionColumns).filter(([name]) => !existingSubmissionNames.has(name));
+  if (missingSubmissionColumns.length) {
+    const clauses = missingSubmissionColumns.map(([name, definition]) => `ADD COLUMN ${name} ${definition}`).join(", ");
+    await pool.query(`ALTER TABLE assignment_submissions ${clauses}`);
+  }
+
   schemaReady = true;
 };
 
@@ -546,6 +564,12 @@ exports.createCourse = async (req, res) => {
 };
 
 const MAX_MATERIAL_BYTES = 8 * 1024 * 1024; // 8MB, stored directly in the database
+const MAX_SUBMISSION_BYTES = 15 * 1024 * 1024; // 15MB, stored directly in the database
+const ALLOWED_SUBMISSION_EXTENSIONS = new Set([
+  "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "csv",
+  "zip", "rar", "7z", "png", "jpg", "jpeg", "gif",
+  "py", "js", "ts", "java", "c", "cpp", "h", "cs", "rb", "go", "php", "html", "css", "json",
+]);
 
 exports.createMaterial = async (req, res) => {
   await ensureAcademicSchema();
@@ -604,12 +628,13 @@ exports.getAssignments = async (req, res) => {
       mine.status AS submissionStatus,
       mine.score,
       mine.feedback,
+      mine.file_name AS fileName,
       mine.submitted_at AS submittedAt
      FROM course_assignments a
      JOIN courses c ON a.course_id = c.id
      LEFT JOIN assignment_submissions s ON s.assignment_id = a.id
      LEFT JOIN assignment_submissions mine ON mine.assignment_id = a.id AND mine.student_id = ?
-     GROUP BY a.id, c.code, mine.id, mine.status, mine.score, mine.feedback, mine.submitted_at
+     GROUP BY a.id, c.code, mine.id, mine.status, mine.score, mine.feedback, mine.file_name, mine.submitted_at
      ORDER BY a.deadline`,
     [req.user.id]
   );
@@ -628,6 +653,8 @@ exports.getAssignments = async (req, res) => {
       feedback: row.feedback || undefined,
       submissionCount: Number(row.submissionCount || 0),
       submissionId: row.submissionId ? String(row.submissionId) : undefined,
+      fileName: row.fileName || undefined,
+      downloadUrl: row.submissionId ? `/academic/assignment-submissions/${row.submissionId}/download` : undefined,
     }))
   );
 };
@@ -648,13 +675,53 @@ exports.createAssignment = async (req, res) => {
 
 exports.submitAssignment = async (req, res) => {
   await ensureAcademicSchema();
-  const { fileUrl } = req.body;
-  await pool.query(
-    `INSERT INTO assignment_submissions (assignment_id, student_id, file_url, status)
-     VALUES (?, ?, ?, 'submitted')
-     ON DUPLICATE KEY UPDATE file_url = VALUES(file_url), status = 'submitted', submitted_at = CURRENT_TIMESTAMP`,
-    [req.params.id, req.user.id, fileUrl || null]
+
+  if (req.user.role !== "student") {
+    return res.status(403).json({ message: "Only students can submit assignments" });
+  }
+
+  const { fileName, fileMime, fileData } = req.body;
+  if (!fileData || !fileName) {
+    return res.status(400).json({ message: "Choose a file to submit" });
+  }
+
+  const extension = String(fileName).split(".").pop()?.toLowerCase();
+  if (!extension || !ALLOWED_SUBMISSION_EXTENSIONS.has(extension)) {
+    return res.status(400).json({
+      message: "That file type isn't allowed. Upload a document, spreadsheet, presentation, image, archive, or common source-code file.",
+    });
+  }
+
+  const buffer = Buffer.from(fileData, "base64");
+  if (buffer.length > MAX_SUBMISSION_BYTES) {
+    return res.status(413).json({ message: "File is too large. Maximum size is 15MB." });
+  }
+
+  const [assignmentRows] = await pool.query("SELECT course_id FROM course_assignments WHERE id = ?", [req.params.id]);
+  const assignment = assignmentRows[0];
+  if (!assignment) return res.status(404).json({ message: "Assignment not found" });
+
+  const [enrollmentRows] = await pool.query(
+    "SELECT id FROM course_enrollments WHERE course_id = ? AND student_id = ?",
+    [assignment.course_id, req.user.id]
   );
+  if (!enrollmentRows.length) {
+    return res.status(403).json({ message: "You are not enrolled in this course" });
+  }
+
+  // A resubmission replaces the previous file outright (the unique assignment+student
+  // constraint means there's only ever one row) rather than keeping version history, and
+  // clears any prior grade since that grade was for a different file.
+  await pool.query(
+    `INSERT INTO assignment_submissions (assignment_id, student_id, file_name, file_mime, file_data, file_size, status)
+     VALUES (?, ?, ?, ?, ?, ?, 'submitted')
+     ON DUPLICATE KEY UPDATE
+       file_name = VALUES(file_name), file_mime = VALUES(file_mime), file_data = VALUES(file_data),
+       file_size = VALUES(file_size), status = 'submitted', submitted_at = CURRENT_TIMESTAMP,
+       score = NULL, feedback = NULL, graded_at = NULL`,
+    [req.params.id, req.user.id, fileName, fileMime || "application/octet-stream", buffer, buffer.length]
+  );
+
   res.status(201).json({ message: "Assignment submitted" });
 };
 
@@ -662,7 +729,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
   await ensureAcademicSchema();
   const [rows] = await pool.query(
     `SELECT s.id, s.student_id AS studentId, u.name AS studentName, u.email AS studentEmail,
-      s.file_url AS fileUrl, s.status, s.score, s.feedback, s.submitted_at AS submittedAt
+      s.file_name AS fileName, s.file_size AS fileSize, s.status, s.score, s.feedback, s.submitted_at AS submittedAt
      FROM assignment_submissions s
      JOIN users u ON u.id = s.student_id
      WHERE s.assignment_id = ?
@@ -676,13 +743,34 @@ exports.getAssignmentSubmissions = async (req, res) => {
       studentId: String(row.studentId),
       studentName: row.studentName,
       studentEmail: row.studentEmail,
-      fileUrl: row.fileUrl || undefined,
+      fileName: row.fileName || undefined,
+      fileSize: row.fileSize || undefined,
+      downloadUrl: row.fileName ? `/academic/assignment-submissions/${row.id}/download` : undefined,
       status: row.status,
       score: row.score === null ? undefined : Number(row.score),
       feedback: row.feedback || undefined,
       submittedAt: row.submittedAt ? dateOnly(row.submittedAt) : undefined,
     }))
   );
+};
+
+exports.downloadSubmission = async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT student_id, file_name, file_mime, file_data FROM assignment_submissions WHERE id = ?",
+    [req.params.id]
+  );
+  const submission = rows[0];
+  if (!submission || !submission.file_data) return res.status(404).json({ message: "File not found" });
+
+  const isOwner = Number(submission.student_id) === Number(req.user.id);
+  const isStaff = req.user.role === "teacher" || req.user.role === "admin";
+  if (!isOwner && !isStaff) {
+    return res.status(403).json({ message: "You don't have access to this file" });
+  }
+
+  res.setHeader("Content-Type", submission.file_mime || "application/octet-stream");
+  res.setHeader("Content-Disposition", `attachment; filename="${(submission.file_name || "submission").replace(/"/g, "")}"`);
+  res.send(submission.file_data);
 };
 
 exports.gradeSubmission = async (req, res) => {

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckCircle2, Clock, FileUp, Loader2, MessageSquareText, Plus, Star, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Download, FileUp, Loader2, MessageSquareText, Plus, Star, XCircle } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -23,14 +23,16 @@ import {
   useAcademicAssignments,
   useAcademicCourses,
 } from "@/hooks/useAcademicPlatform";
-import { apiRequest } from "@/lib/api";
+import { apiRequest, buildApiUrl, getToken } from "@/lib/api";
 
 interface AssignmentSubmission {
   id: string;
   studentId: string;
   studentName: string;
   studentEmail?: string;
-  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  downloadUrl?: string;
   status: string;
   score?: number;
   feedback?: string;
@@ -45,6 +47,63 @@ const assignmentTone = {
   late: "bg-destructive/10 text-destructive border-destructive/20",
 };
 
+// Keep in sync with the 15MB / extension allow-list enforced server-side in
+// rupper-backend/controllers/academicController.js.
+const MAX_SUBMISSION_BYTES = 15 * 1024 * 1024;
+const ALLOWED_SUBMISSION_EXTENSIONS = new Set([
+  "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "csv",
+  "zip", "rar", "7z", "png", "jpg", "jpeg", "gif",
+  "py", "js", "ts", "java", "c", "cpp", "h", "cs", "rb", "go", "php", "html", "css", "json",
+]);
+
+const validateSubmissionFile = (file: File): string | null => {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (!extension || !ALLOWED_SUBMISSION_EXTENSIONS.has(extension)) {
+    return "That file type isn't supported. Upload a document, spreadsheet, presentation, image, archive, or common source-code file.";
+  }
+  if (file.size > MAX_SUBMISSION_BYTES) {
+    return "File is too large. Maximum size is 15MB.";
+  }
+  return null;
+};
+
+const readFileAsBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+const formatBytes = (bytes?: number) => {
+  if (!bytes) return "";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+async function downloadSubmissionFile(downloadUrl: string, fileName?: string) {
+  try {
+    const res = await fetch(buildApiUrl(downloadUrl), {
+      headers: { Authorization: `Bearer ${getToken() || ""}` },
+    });
+    if (!res.ok) throw new Error("Download failed");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName || "submission";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    toast.error("Could not download this file");
+  }
+}
+
 export default function Assignments() {
   const { role } = useRole();
   const queryClient = useQueryClient();
@@ -54,6 +113,8 @@ export default function Assignments() {
   const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [savingSubmissionId, setSavingSubmissionId] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<Record<string, File | undefined>>({});
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newAssignment, setNewAssignment] = useState({ courseId: "", title: "", description: "", deadline: "", maxScore: "100" });
   const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
@@ -102,16 +163,38 @@ export default function Assignments() {
     }
   };
 
+  const handleFileChange = (assignmentId: string, file: File | null) => {
+    if (file) {
+      const error = validateSubmissionFile(file);
+      if (error) {
+        toast.error(error);
+        return;
+      }
+    }
+    setPendingFile((current) => ({ ...current, [assignmentId]: file ?? undefined }));
+  };
+
   const submitAssignment = async (assignmentId: string) => {
+    const file = pendingFile[assignmentId];
+    if (!file) {
+      toast.error("Choose a file to submit first.");
+      return;
+    }
+
+    setSubmittingId(assignmentId);
     try {
+      const fileData = await readFileAsBase64(file);
       await apiRequest<{ message: string }>(`/academic/assignments/${assignmentId}/submissions`, {
         method: "POST",
-        body: JSON.stringify({ fileUrl: "student-submission-placeholder.pdf" }),
+        body: JSON.stringify({ fileName: file.name, fileMime: file.type || "application/octet-stream", fileData }),
       });
+      setPendingFile((current) => ({ ...current, [assignmentId]: undefined }));
       await refreshAssignments();
-      toast.success("Submission saved to backend");
-    } catch {
-      toast.error("Could not submit assignment");
+      toast.success("Assignment submitted");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not submit assignment");
+    } finally {
+      setSubmittingId(null);
     }
   };
 
@@ -223,10 +306,52 @@ export default function Assignments() {
                     <MiniMetric label="Submitted" value={assignment.submissionCount} />
                     <MiniMetric label="Score" value={assignment.score ? `${assignment.score}/${assignment.maxScore}` : "Pending"} />
                   </div>
-                  <Button className="mt-4 w-full bg-gradient-primary text-primary-foreground" onClick={() => (isTeacher ? openReview(assignment) : submitAssignment(assignment.id))}>
-                    <FileUp className="mr-2 h-4 w-4" />
-                    {isTeacher ? "Review submissions" : "Submit file"}
-                  </Button>
+
+                  {isTeacher ? (
+                    <Button className="mt-4 w-full bg-gradient-primary text-primary-foreground" onClick={() => openReview(assignment)}>
+                      <FileUp className="mr-2 h-4 w-4" />
+                      Review submissions
+                    </Button>
+                  ) : (
+                    <div className="mt-4 space-y-2">
+                      {assignment.submissionId && assignment.downloadUrl && (
+                        <button
+                          type="button"
+                          onClick={() => downloadSubmissionFile(assignment.downloadUrl!, assignment.fileName)}
+                          className="flex w-full items-center gap-2 rounded-lg border border-border/60 bg-card px-3 py-2 text-left text-xs transition-base hover:border-primary/40"
+                        >
+                          <Download className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate text-foreground">{assignment.fileName || "Your submission"}</span>
+                        </button>
+                      )}
+                      <Input
+                        type="file"
+                        onChange={(e) => handleFileChange(assignment.id, e.target.files?.[0] ?? null)}
+                        disabled={submittingId === assignment.id}
+                      />
+                      <p className="truncate text-xs text-muted-foreground">
+                        {pendingFile[assignment.id]
+                          ? `${pendingFile[assignment.id]!.name} - ${formatBytes(pendingFile[assignment.id]!.size)}`
+                          : "Max 15MB."}
+                      </p>
+                      <Button
+                        className="w-full bg-gradient-primary text-primary-foreground"
+                        onClick={() => submitAssignment(assignment.id)}
+                        disabled={submittingId === assignment.id || !pendingFile[assignment.id]}
+                      >
+                        {submittingId === assignment.id ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...
+                          </>
+                        ) : (
+                          <>
+                            <FileUp className="mr-2 h-4 w-4" />
+                            {assignment.submissionId ? "Resubmit" : "Submit file"}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>
@@ -335,6 +460,21 @@ export default function Assignments() {
                       {submission.status}
                     </Badge>
                   </div>
+                  {submission.downloadUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => downloadSubmissionFile(submission.downloadUrl!, submission.fileName)}
+                      className="mb-3 flex w-full items-center gap-2 rounded-lg border border-border/60 bg-card px-3 py-2 text-left text-xs transition-base hover:border-primary/40"
+                    >
+                      <Download className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate text-foreground">{submission.fileName}</span>
+                      {submission.fileSize ? (
+                        <span className="ml-auto shrink-0 text-muted-foreground">{formatBytes(submission.fileSize)}</span>
+                      ) : null}
+                    </button>
+                  ) : (
+                    <p className="mb-3 text-xs text-muted-foreground">No file was attached to this submission.</p>
+                  )}
                   <div className="grid gap-3 sm:grid-cols-[120px_1fr]">
                     <div>
                       <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Score</label>

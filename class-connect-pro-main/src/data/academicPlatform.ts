@@ -27,6 +27,8 @@ export interface AcademicAssignment {
   feedback?: string;
   submissionCount: number;
   submissionId?: string;
+  fileName?: string;
+  downloadUrl?: string;
 }
 
 export interface AcademicQuiz {

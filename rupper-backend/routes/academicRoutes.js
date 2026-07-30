@@ -13,6 +13,7 @@ router.get("/assignments", auth, asyncHandler(c.getAssignments));
 router.post("/assignments", auth, requireTeacher, asyncHandler(c.createAssignment));
 router.post("/assignments/:id/submissions", auth, asyncHandler(c.submitAssignment));
 router.get("/assignments/:id/submissions", auth, requireTeacher, asyncHandler(c.getAssignmentSubmissions));
+router.get("/assignment-submissions/:id/download", auth, asyncHandler(c.downloadSubmission));
 router.put("/assignment-submissions/:id/grade", auth, requireTeacher, asyncHandler(c.gradeSubmission));
 
 router.get("/quizzes", auth, asyncHandler(c.getQuizzes));
