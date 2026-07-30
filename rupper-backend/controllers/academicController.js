@@ -788,18 +788,32 @@ exports.gradeSubmission = async (req, res) => {
 exports.getQuizzes = async (req, res) => {
   await seedAcademicData(req.user);
 
+  // quiz_attempts has no unique (quiz_id, student_id) constraint - retakes are allowed - so a
+  // flat join across quiz_questions and quiz_attempts fans out (N questions x M attempts) and
+  // corrupts COUNT(qq.id). Pre-aggregating each side to one row per quiz before joining avoids
+  // that; "mine" additionally pins to a single row via the latest attempt (highest id) so a
+  // retake doesn't duplicate the quiz in the list.
   const [rows] = await pool.query(
     `SELECT q.*, c.code AS courseCode,
-      COUNT(qq.id) AS questionCount,
-      GROUP_CONCAT(DISTINCT qq.question_type) AS questionTypes,
-      AVG(qa.score) AS averageScore,
+      COALESCE(qc.questionCount, 0) AS questionCount,
+      qc.questionTypes,
+      ac.averageScore,
       mine.score AS myScore
      FROM quizzes q
      JOIN courses c ON q.course_id = c.id
-     LEFT JOIN quiz_questions qq ON qq.quiz_id = q.id
-     LEFT JOIN quiz_attempts qa ON qa.quiz_id = q.id
-     LEFT JOIN quiz_attempts mine ON mine.quiz_id = q.id AND mine.student_id = ?
-     GROUP BY q.id, c.code, mine.score
+     LEFT JOIN (
+       SELECT quiz_id, COUNT(*) AS questionCount, GROUP_CONCAT(DISTINCT question_type) AS questionTypes
+       FROM quiz_questions
+       GROUP BY quiz_id
+     ) qc ON qc.quiz_id = q.id
+     LEFT JOIN (
+       SELECT quiz_id, AVG(score) AS averageScore
+       FROM quiz_attempts
+       GROUP BY quiz_id
+     ) ac ON ac.quiz_id = q.id
+     LEFT JOIN quiz_attempts mine ON mine.id = (
+       SELECT MAX(id) FROM quiz_attempts latest WHERE latest.quiz_id = q.id AND latest.student_id = ?
+     )
      ORDER BY q.created_at DESC`,
     [req.user.id]
   );
@@ -847,11 +861,31 @@ exports.createQuiz = async (req, res) => {
 
 exports.submitQuizAttempt = async (req, res) => {
   await ensureAcademicSchema();
-  const [questions] = await pool.query("SELECT COUNT(*) AS total FROM quiz_questions WHERE quiz_id = ?", [req.params.id]);
+
+  if (req.user.role !== "student") {
+    return res.status(403).json({ message: "Only students can submit quiz attempts" });
+  }
+
+  // The frontend list briefly renders placeholder demo data (ids like "q1") before the real
+  // fetch resolves; a click during that window used to reach this endpoint with a non-numeric
+  // id and crash on the INT column with an unhandled MySQL error. Validate first.
+  const quizId = Number(req.params.id);
+  if (!Number.isInteger(quizId) || quizId <= 0) {
+    return res.status(400).json({ message: "Invalid quiz" });
+  }
+
+  const [quizRows] = await pool.query("SELECT id, status FROM quizzes WHERE id = ?", [quizId]);
+  const quiz = quizRows[0];
+  if (!quiz) return res.status(404).json({ message: "Quiz not found" });
+  if (quiz.status !== "available") {
+    return res.status(400).json({ message: "This quiz isn't open for attempts" });
+  }
+
+  const [questions] = await pool.query("SELECT COUNT(*) AS total FROM quiz_questions WHERE quiz_id = ?", [quizId]);
   const score = Math.max(1, Number(questions[0]?.total || 1));
   await pool.query(
     "INSERT INTO quiz_attempts (quiz_id, student_id, answers_json, score, submitted_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-    [req.params.id, req.user.id, JSON.stringify(req.body.answers || {}), score]
+    [quizId, req.user.id, JSON.stringify(req.body.answers || {}), score]
   );
   res.status(201).json({ score, message: "Quiz submitted" });
 };

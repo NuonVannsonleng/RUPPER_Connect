@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Brain, CheckCircle2, Clock3, HelpCircle, ListChecks, Plus, Trophy } from "lucide-react";
+import { Brain, CheckCircle2, Clock3, HelpCircle, ListChecks, Loader2, Plus, Trophy } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -33,13 +33,19 @@ const statusTone = {
 export default function Quizzes() {
   const { role } = useRole();
   const queryClient = useQueryClient();
-  const { data: quizzes = [], isFetching } = useAcademicQuizzes();
+  const { data: quizzes = [], isFetching, dataUpdatedAt } = useAcademicQuizzes();
   const { data: courses = [] } = useAcademicCourses();
   const [viewingQuiz, setViewingQuiz] = useState<AcademicQuiz | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newQuiz, setNewQuiz] = useState({ courseId: "", title: "", description: "", timeLimit: "20", status: "available" });
   const [isCreatingQuiz, setIsCreatingQuiz] = useState(false);
+  const [submittingQuizId, setSubmittingQuizId] = useState<string | null>(null);
   const isTeacher = role === "teacher";
+  // The list starts out showing hardcoded placeholder data (ids like "q1") while the real
+  // request is in flight - dataUpdatedAt stays 0 until that first real response lands
+  // (see initialDataUpdatedAt: 0 in App.tsx). Acting on the placeholder rows crashes the
+  // submit endpoint, so quiz actions stay disabled until this flips true.
+  const quizzesLoaded = dataUpdatedAt > 0;
   const available = quizzes.filter((quiz) => quiz.status === "available").length;
   const completed = quizzes.filter((quiz) => quiz.status === "completed").length;
   const questionTotal = quizzes.reduce((total, quiz) => total + quiz.questions, 0);
@@ -84,6 +90,18 @@ export default function Quizzes() {
   };
 
   const submitQuiz = async (quizId: string) => {
+    if (!quizzesLoaded) {
+      toast.error("Quizzes are still loading. Try again in a moment.");
+      return;
+    }
+    if (!/^\d+$/.test(quizId)) {
+      // Placeholder rows use non-numeric ids ("q1") and shouldn't be actionable even if a
+      // click somehow lands before quizzesLoaded flips true.
+      toast.error("This quiz hasn't loaded yet. Try again in a moment.");
+      return;
+    }
+
+    setSubmittingQuizId(quizId);
     try {
       await apiRequest<{ message: string }>(`/academic/quizzes/${quizId}/attempts`, {
         method: "POST",
@@ -91,8 +109,10 @@ export default function Quizzes() {
       });
       await refreshQuizzes();
       toast.success("Quiz attempt submitted");
-    } catch {
-      toast.error("Could not submit quiz");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not submit quiz");
+    } finally {
+      setSubmittingQuizId(null);
     }
   };
 
@@ -158,8 +178,26 @@ export default function Quizzes() {
               ))}
             </div>
 
-            <Button className="mt-auto w-full bg-gradient-primary text-primary-foreground" onClick={() => (isTeacher ? setViewingQuiz(quiz) : submitQuiz(quiz.id))}>
-              {isTeacher ? "View results" : quiz.status === "completed" ? "View results" : "Take quiz"}
+            <Button
+              className="mt-auto w-full bg-gradient-primary text-primary-foreground"
+              onClick={() => (isTeacher ? setViewingQuiz(quiz) : submitQuiz(quiz.id))}
+              disabled={!isTeacher && (!quizzesLoaded || submittingQuizId === quiz.id)}
+            >
+              {!isTeacher && !quizzesLoaded ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
+                </>
+              ) : !isTeacher && submittingQuizId === quiz.id ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...
+                </>
+              ) : isTeacher ? (
+                "View results"
+              ) : quiz.status === "completed" ? (
+                "View results"
+              ) : (
+                "Take quiz"
+              )}
             </Button>
           </Card>
         ))}
