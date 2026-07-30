@@ -1,6 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Loader2, MailWarning, Plus, Search, Trash2, UserCog, Users } from "lucide-react";
+import {
+  Eye,
+  KeyRound,
+  Loader2,
+  MailWarning,
+  Plus,
+  Power,
+  Search,
+  Send,
+  Trash2,
+  UserCog,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -17,7 +29,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -29,6 +41,7 @@ import { useAuth, type UserRole } from "@/context/AuthContext";
 import {
   ADMIN_STATS_QUERY_KEY,
   ADMIN_USERS_QUERY_KEY,
+  useAdminUserProfile,
   useAdminUsers,
   useEmailDiagnostics,
   type AdminUser,
@@ -51,6 +64,70 @@ const initials = (name: string) =>
 
 const emptyForm = { name: "", email: "", password: "", role: "student" as UserRole };
 
+const PROFILE_FIELDS: Array<{ key: keyof ProfileFormState; label: string }> = [
+  { key: "name", label: "Name" },
+  { key: "phone", label: "Phone" },
+  { key: "studentId", label: "Student ID" },
+  { key: "major", label: "Major" },
+  { key: "year", label: "Year" },
+  { key: "department", label: "Department" },
+  { key: "office", label: "Office" },
+];
+
+interface ProfileFormState {
+  name: string;
+  phone: string;
+  studentId: string;
+  major: string;
+  year: string;
+  department: string;
+  office: string;
+}
+
+const emptyProfileForm: ProfileFormState = {
+  name: "",
+  phone: "",
+  studentId: "",
+  major: "",
+  year: "",
+  department: "",
+  office: "",
+};
+
+interface FieldDiff {
+  label: string;
+  from: string;
+  to: string;
+}
+
+const diffFields = (before: ProfileFormState, after: ProfileFormState): FieldDiff[] =>
+  PROFILE_FIELDS.map(({ key, label }) => ({ label, from: before[key] ?? "", to: after[key] ?? "" })).filter(
+    (row) => row.from !== row.to
+  );
+
+function DiffList({ diff }: { diff: FieldDiff[] }) {
+  return (
+    <ul className="space-y-1.5 text-sm">
+      {diff.map((row) => (
+        <li key={row.label} className="flex flex-wrap items-baseline gap-x-1.5">
+          <span className="font-medium text-foreground">{row.label}:</span>
+          <span className="text-muted-foreground line-through">{row.from || "(empty)"}</span>
+          <span className="text-muted-foreground">&rarr;</span>
+          <span className="font-medium text-foreground">{row.to || "(empty)"}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+interface PendingConfirm {
+  title: string;
+  description: ReactNode;
+  confirmLabel: string;
+  destructive?: boolean;
+  onConfirm: () => Promise<void>;
+}
+
 export default function UserManagement() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -59,15 +136,37 @@ export default function UserManagement() {
 
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | UserRole>("all");
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [isCreating, setIsCreating] = useState(false);
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
   const [resetPassword, setResetPassword] = useState("");
   const [isResetting, setIsResetting] = useState(false);
+
+  // A single shared confirmation dialog drives every sensitive action (role change, profile
+  // edits, email change, activate/deactivate, send-reset-email, delete) so each one gets the
+  // same "here's exactly what will change, are you sure" treatment instead of a one-off per action.
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const { data: profile, isFetching: isProfileLoading } = useAdminUserProfile(profileId);
+  const [profileForm, setProfileForm] = useState<ProfileFormState>(emptyProfileForm);
+  const [emailDraft, setEmailDraft] = useState("");
+
+  useEffect(() => {
+    if (!profile) return;
+    setProfileForm({
+      name: profile.name,
+      phone: profile.phone || "",
+      studentId: profile.studentId || "",
+      major: profile.major || "",
+      year: profile.year || "",
+      department: profile.department || "",
+      office: profile.office || "",
+    });
+    setEmailDraft(profile.email);
+  }, [profile]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ADMIN_USERS_QUERY_KEY });
@@ -83,36 +182,173 @@ export default function UserManagement() {
     });
   }, [users, search, roleFilter]);
 
-  const changeRole = async (account: AdminUser, role: UserRole) => {
-    if (role === account.role) return;
-    setSavingId(account.id);
+  const requestConfirm = (options: PendingConfirm) => setPendingConfirm(options);
+
+  const runConfirmed = async () => {
+    if (!pendingConfirm) return;
+    setIsConfirming(true);
     try {
-      await apiRequest<AdminUser>(`/admin/users/${account.id}/role`, {
-        method: "PUT",
-        body: JSON.stringify({ role }),
-      });
-      await refresh();
-      toast.success(`${account.name} is now a ${role}`);
+      await pendingConfirm.onConfirm();
+      setPendingConfirm(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not change this role");
+      toast.error(error instanceof Error ? error.message : "Something went wrong");
+      // Leave the dialog open so they can retry or cancel instead of losing their place.
     } finally {
-      setSavingId(null);
+      setIsConfirming(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!userToDelete) return;
-    setIsDeleting(true);
-    try {
-      await apiRequest<{ message: string }>(`/admin/users/${userToDelete.id}`, { method: "DELETE" });
-      await refresh();
-      toast.success(`${userToDelete.name} was removed`);
-      setUserToDelete(null);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not delete this account");
-    } finally {
-      setIsDeleting(false);
+  const requestRoleChange = (account: AdminUser, role: UserRole) => {
+    if (role === account.role) return;
+    requestConfirm({
+      title: "Change this account's role?",
+      description: (
+        <span>
+          <strong className="text-foreground">{account.name}</strong> ({account.email}) moves from{" "}
+          <strong className="capitalize text-foreground">{account.role}</strong> to{" "}
+          <strong className="capitalize text-foreground">{role}</strong>.
+        </span>
+      ),
+      confirmLabel: "Change role",
+      onConfirm: async () => {
+        await apiRequest<AdminUser>(`/admin/users/${account.id}/role`, {
+          method: "PUT",
+          body: JSON.stringify({ role }),
+        });
+        await refresh();
+        toast.success(`${account.name} is now a ${role}`);
+      },
+    });
+  };
+
+  const requestDelete = (account: AdminUser) => {
+    requestConfirm({
+      title: "Delete this account?",
+      description: (
+        <span>
+          <strong className="text-foreground">{account.name}</strong> ({account.email}) will be permanently removed,
+          along with their attendance, grades, and submissions. This cannot be undone.
+        </span>
+      ),
+      confirmLabel: "Delete account",
+      destructive: true,
+      onConfirm: async () => {
+        await apiRequest<{ message: string }>(`/admin/users/${account.id}`, { method: "DELETE" });
+        await refresh();
+        if (profileId === account.id) setProfileId(null);
+        toast.success(`${account.name} was removed`);
+      },
+    });
+  };
+
+  const refreshProfile = () => queryClient.invalidateQueries({ queryKey: [...ADMIN_USERS_QUERY_KEY, profileId] });
+
+  const saveProfile = () => {
+    if (!profile) return;
+    const before: ProfileFormState = {
+      name: profile.name,
+      phone: profile.phone || "",
+      studentId: profile.studentId || "",
+      major: profile.major || "",
+      year: profile.year || "",
+      department: profile.department || "",
+      office: profile.office || "",
+    };
+    const diff = diffFields(before, profileForm);
+    if (!diff.length) {
+      toast.info("No changes to save.");
+      return;
     }
+
+    requestConfirm({
+      title: "Save profile changes?",
+      description: <DiffList diff={diff} />,
+      confirmLabel: "Save changes",
+      onConfirm: async () => {
+        await apiRequest(`/admin/users/${profile.id}`, { method: "PUT", body: JSON.stringify(profileForm) });
+        await refreshProfile();
+        await refresh();
+        toast.success("Profile updated");
+      },
+    });
+  };
+
+  const saveEmail = () => {
+    if (!profile) return;
+    const next = emailDraft.trim().toLowerCase();
+    if (!next || next === profile.email) return;
+
+    requestConfirm({
+      title: "Change the login email?",
+      description: (
+        <span>
+          This is the address <strong className="text-foreground">{profile.name}</strong> signs in with. It changes
+          from <strong className="text-foreground">{profile.email}</strong> to{" "}
+          <strong className="text-foreground">{next}</strong>, effective immediately - they'll need to use the new
+          address next time they sign in.
+        </span>
+      ),
+      confirmLabel: "Change email",
+      onConfirm: async () => {
+        await apiRequest(`/admin/users/${profile.id}/email`, {
+          method: "PUT",
+          body: JSON.stringify({ email: next }),
+        });
+        await refreshProfile();
+        await refresh();
+        toast.success("Login email updated");
+      },
+    });
+  };
+
+  const toggleActive = () => {
+    if (!profile) return;
+    const nextActive = !profile.isActive;
+
+    requestConfirm({
+      title: nextActive ? "Reactivate this account?" : "Deactivate this account?",
+      description: nextActive ? (
+        <span>
+          <strong className="text-foreground">{profile.name}</strong> will be able to sign in again immediately.
+        </span>
+      ) : (
+        <span>
+          <strong className="text-foreground">{profile.name}</strong> will be signed out immediately and won't be
+          able to sign in until reactivated.
+        </span>
+      ),
+      confirmLabel: nextActive ? "Reactivate" : "Deactivate",
+      destructive: !nextActive,
+      onConfirm: async () => {
+        await apiRequest(`/admin/users/${profile.id}/status`, {
+          method: "PUT",
+          body: JSON.stringify({ isActive: nextActive }),
+        });
+        await refreshProfile();
+        await refresh();
+        toast.success(nextActive ? "Account reactivated" : "Account deactivated");
+      },
+    });
+  };
+
+  const sendResetEmail = () => {
+    if (!profile) return;
+    requestConfirm({
+      title: "Send a password reset email?",
+      description: (
+        <span>
+          A reset link will be emailed to <strong className="text-foreground">{profile.email}</strong>. It expires
+          in 30 minutes.
+        </span>
+      ),
+      confirmLabel: "Send email",
+      onConfirm: async () => {
+        const data = await apiRequest<{ message: string }>(`/admin/users/${profile.id}/send-reset-email`, {
+          method: "POST",
+        });
+        toast.success(data.message);
+      },
+    });
   };
 
   const handleSetPassword = async () => {
@@ -165,12 +401,14 @@ export default function UserManagement() {
     }
   };
 
+  const profileIsSelf = profile ? String(profile.id) === String(user?.id ?? "") : false;
+
   return (
     <>
       <PageHeader
         eyebrow="Administration"
         title="User management"
-        description="Create accounts, promote teachers, and control who can administer the platform."
+        description="Create accounts, view and edit full profiles, and control who can administer the platform."
         actions={
           <Button size="sm" variant="secondary" className="font-semibold" onClick={() => setCreateOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
@@ -264,7 +502,11 @@ export default function UserManagement() {
               const isSelf = String(account.id) === String(user?.id ?? "");
               return (
                 <li key={account.id} className="flex flex-col gap-3 px-5 py-4 transition-base hover:bg-secondary/30 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex min-w-0 items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setProfileId(account.id)}
+                    className="flex min-w-0 items-center gap-3 text-left"
+                  >
                     <Avatar className="h-10 w-10">
                       <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">
                         {initials(account.name)}
@@ -275,6 +517,11 @@ export default function UserManagement() {
                       <div className="flex flex-wrap items-center gap-2 font-semibold text-foreground">
                         <span className="truncate">{account.name}</span>
                         {isSelf && <Badge variant="outline" className="text-[10px] uppercase">You</Badge>}
+                        {!account.isActive && (
+                          <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[10px] uppercase text-destructive">
+                            Inactive
+                          </Badge>
+                        )}
                       </div>
                       <p className="truncate text-xs text-muted-foreground">
                         {account.email}
@@ -282,15 +529,15 @@ export default function UserManagement() {
                         {account.department ? ` - ${account.department}` : ""}
                       </p>
                     </div>
-                  </div>
+                  </button>
 
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge className={`border capitalize ${roleTone[account.role] ?? ""}`}>{account.role}</Badge>
 
                     <Select
                       value={account.role}
-                      onValueChange={(value) => changeRole(account, value as UserRole)}
-                      disabled={savingId === account.id || isSelf}
+                      onValueChange={(value) => requestRoleChange(account, value as UserRole)}
+                      disabled={isConfirming || isSelf}
                     >
                       <SelectTrigger className="h-9 w-36">
                         <SelectValue />
@@ -302,7 +549,16 @@ export default function UserManagement() {
                       </SelectContent>
                     </Select>
 
-                    {savingId === account.id && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                      onClick={() => setProfileId(account.id)}
+                      aria-label={`View ${account.name}'s profile`}
+                      title="View full profile"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Button>
 
                     <Button
                       variant="ghost"
@@ -322,9 +578,10 @@ export default function UserManagement() {
                       variant="ghost"
                       size="icon"
                       className="h-9 w-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => setUserToDelete(account)}
+                      onClick={() => requestDelete(account)}
                       disabled={isSelf}
                       aria-label={`Delete ${account.name}`}
+                      title="Delete account"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -449,24 +706,210 @@ export default function UserManagement() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={Boolean(userToDelete)} onOpenChange={(open) => !open && setUserToDelete(null)}>
+      {/* Full profile: view + edit every editable field, change the login email, activate or
+          deactivate, and trigger a reset email - the hub the row's icons feed into. */}
+      <Dialog open={Boolean(profileId)} onOpenChange={(open) => !open && setProfileId(null)}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Account profile</DialogTitle>
+          </DialogHeader>
+
+          {isProfileLoading && !profile ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading profile...
+            </div>
+          ) : profile ? (
+            <div className="max-h-[70vh] space-y-6 overflow-y-auto pr-1 pt-2">
+              <div className="flex items-center gap-3">
+                <Avatar className="h-14 w-14">
+                  <AvatarImage src={profile.avatar} alt={profile.name} />
+                  <AvatarFallback className="bg-primary/10 text-base font-bold text-primary">
+                    {initials(profile.name)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate font-display text-lg font-bold text-foreground">{profile.name}</p>
+                    <Badge className={`border capitalize ${roleTone[profile.role] ?? ""}`}>{profile.role}</Badge>
+                    <Badge
+                      variant="outline"
+                      className={
+                        profile.isActive
+                          ? "border-success/30 bg-success/10 text-success"
+                          : "border-destructive/30 bg-destructive/10 text-destructive"
+                      }
+                    >
+                      {profile.isActive ? "Active" : "Inactive"}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {profile.email}
+                    {profile.createdAt ? ` - member since ${profile.createdAt}` : ""}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-border/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Profile fields</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="profile-name">Name</Label>
+                    <Input
+                      id="profile-name"
+                      value={profileForm.name}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, name: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="profile-phone">Phone</Label>
+                    <Input
+                      id="profile-phone"
+                      value={profileForm.phone}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, phone: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="profile-student-id">Student ID</Label>
+                    <Input
+                      id="profile-student-id"
+                      value={profileForm.studentId}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, studentId: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="profile-major">Major</Label>
+                    <Input
+                      id="profile-major"
+                      value={profileForm.major}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, major: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="profile-year">Year</Label>
+                    <Input
+                      id="profile-year"
+                      value={profileForm.year}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, year: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="profile-department">Department</Label>
+                    <Input
+                      id="profile-department"
+                      value={profileForm.department}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, department: e.target.value }))}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label htmlFor="profile-office">Office</Label>
+                    <Input
+                      id="profile-office"
+                      value={profileForm.office}
+                      onChange={(e) => setProfileForm((f) => ({ ...f, office: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <Button size="sm" onClick={saveProfile} className="bg-gradient-primary text-primary-foreground">
+                  Save changes
+                </Button>
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-border/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Login email</p>
+                <p className="text-xs text-muted-foreground">
+                  This is the address used to sign in - changing it updates the account's login credential directly.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    type="email"
+                    value={emailDraft}
+                    onChange={(e) => setEmailDraft(e.target.value)}
+                    className="sm:flex-1"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={saveEmail}
+                    disabled={!emailDraft.trim() || emailDraft.trim().toLowerCase() === profile.email}
+                  >
+                    Update email
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-border/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Password &amp; access</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={sendResetEmail} disabled={!mail?.ok}>
+                    <Send className="mr-2 h-3.5 w-3.5" />
+                    Send reset email
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setProfileId(null);
+                      setResetTarget(profile);
+                      setResetPassword("");
+                    }}
+                  >
+                    <KeyRound className="mr-2 h-3.5 w-3.5" />
+                    Set password directly
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={toggleActive}
+                    disabled={profileIsSelf && profile.isActive}
+                    className={profile.isActive ? "text-destructive hover:bg-destructive/10 hover:text-destructive" : ""}
+                  >
+                    <Power className="mr-2 h-3.5 w-3.5" />
+                    {profile.isActive ? "Deactivate account" : "Reactivate account"}
+                  </Button>
+                </div>
+                {!mail?.ok && (
+                  <p className="text-xs text-muted-foreground">
+                    Email delivery isn't configured, so "Send reset email" is unavailable - use "Set password
+                    directly" instead.
+                  </p>
+                )}
+                {profileIsSelf && (
+                  <p className="text-xs text-muted-foreground">You can't deactivate your own account.</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="py-10 text-center text-sm text-muted-foreground">Could not load this profile.</p>
+          )}
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setProfileId(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={Boolean(pendingConfirm)} onOpenChange={(open) => !open && !isConfirming && setPendingConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this account?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {userToDelete
-                ? `${userToDelete.name} (${userToDelete.email}) will be permanently removed, along with their attendance, grades, and submissions.`
-                : ""}
+            <AlertDialogTitle>{pendingConfirm?.title}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>{pendingConfirm?.description}</div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isConfirming}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDelete}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={runConfirmed}
+              disabled={isConfirming}
+              className={
+                pendingConfirm?.destructive
+                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  : "bg-gradient-primary text-primary-foreground"
+              }
             >
-              {isDeleting ? "Deleting..." : "Delete account"}
+              {isConfirming ? "Working..." : pendingConfirm?.confirmLabel}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

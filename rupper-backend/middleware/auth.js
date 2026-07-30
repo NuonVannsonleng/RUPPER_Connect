@@ -18,8 +18,15 @@ module.exports = async (req, res, next) => {
   // resetting a compromised account expects. Tokens minted before the last password change
   // are refused. `iat` is in seconds; a second of slack covers rounding.
   try {
-    const [rows] = await pool.query("SELECT password_changed_at FROM users WHERE id = ?", [payload.id]);
+    const [rows] = await pool.query("SELECT password_changed_at, is_active FROM users WHERE id = ?", [payload.id]);
     if (!rows.length) return res.status(401).json({ message: "Account no longer exists" });
+
+    // A 7-day token issued before an admin deactivates the account would otherwise keep
+    // working for the rest of its life - this is what actually cuts off a live session,
+    // not just future logins.
+    if (Number(rows[0].is_active) === 0) {
+      return res.status(403).json({ message: "This account has been deactivated." });
+    }
 
     const changedAt = rows[0].password_changed_at;
     if (changedAt && payload.iat) {

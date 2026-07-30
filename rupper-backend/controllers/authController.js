@@ -57,6 +57,12 @@ exports.login = async (req, res) => {
   const ok = await bcrypt.compare(password, found.password);
   if (!ok) return res.status(400).json({ message: "Invalid email or password" });
 
+  // Checked after the password so a deactivated account can't be distinguished from a wrong
+  // password by anyone who doesn't already know the correct one.
+  if (Number(found.is_active) === 0) {
+    return res.status(403).json({ message: "This account has been deactivated. Contact an administrator." });
+  }
+
   res.json({ token: makeToken(found), user: publicUser(found) });
 };
 

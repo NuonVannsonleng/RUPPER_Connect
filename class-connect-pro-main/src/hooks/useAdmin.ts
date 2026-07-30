@@ -11,11 +11,19 @@ export interface AdminUser {
   name: string;
   email: string;
   role: UserRole;
+  phone?: string;
   studentId?: string;
   major?: string;
   year?: string;
   department?: string;
+  office?: string;
+  isActive: boolean;
   createdAt?: string;
+}
+
+/** Full detail fetched for a single user (adds the avatar, left out of the list for payload size). */
+export interface AdminUserProfile extends AdminUser {
+  avatar?: string;
 }
 
 export interface AdminStats {
@@ -87,6 +95,14 @@ export function useAdminUsers() {
     queryKey: ADMIN_USERS_QUERY_KEY,
     queryFn: () => apiRequest<AdminUser[]>("/admin/users"),
     initialData: [],
+  });
+}
+
+export function useAdminUserProfile(id: string | null) {
+  return useQuery({
+    queryKey: [...ADMIN_USERS_QUERY_KEY, id],
+    queryFn: () => apiRequest<AdminUserProfile>(`/admin/users/${id}`),
+    enabled: Boolean(id),
   });
 }
 

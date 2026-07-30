@@ -12,8 +12,13 @@ router.get("/email-diagnostics", asyncHandler(c.emailDiagnostics));
 
 router.get("/users", asyncHandler(c.getUsers));
 router.post("/users", asyncHandler(c.createUser));
+router.get("/users/:id", asyncHandler(c.getUserById));
+router.put("/users/:id", asyncHandler(c.updateUserProfile));
+router.put("/users/:id/email", asyncHandler(c.updateUserEmail));
 router.put("/users/:id/role", asyncHandler(c.updateUserRole));
+router.put("/users/:id/status", asyncHandler(c.setUserActive));
 router.put("/users/:id/password", asyncHandler(c.setUserPassword));
+router.post("/users/:id/send-reset-email", asyncHandler(c.sendResetEmail));
 router.delete("/users/:id", asyncHandler(c.deleteUser));
 
 router.get("/courses", asyncHandler(c.getCourses));

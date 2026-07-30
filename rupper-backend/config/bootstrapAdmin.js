@@ -17,6 +17,20 @@ async function ensurePasswordChangedColumn() {
 }
 
 /**
+ * Lets an admin deactivate an account without deleting it. Same lazy-migration approach as
+ * ensurePasswordChangedColumn, for databases created before this existed.
+ */
+async function ensureUserStatusColumn() {
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS total FROM information_schema.columns
+     WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'is_active'`
+  );
+  if (Number(rows[0].total) === 0) {
+    await pool.query("ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1");
+  }
+}
+
+/**
  * Promotes the account named by ADMIN_EMAIL to admin on boot.
  *
  * Public signup refuses the admin role on purpose, and on a hosted database you usually
@@ -56,4 +70,4 @@ async function bootstrapAdmin() {
   return { created: true, email };
 }
 
-module.exports = { bootstrapAdmin, ensurePasswordChangedColumn };
+module.exports = { bootstrapAdmin, ensurePasswordChangedColumn, ensureUserStatusColumn };

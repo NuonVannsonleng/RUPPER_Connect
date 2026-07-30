@@ -1,25 +1,42 @@
 const bcrypt = require("bcryptjs");
 const pool = require("../config/db");
-const { verifyMailer, isMailerConfigured, mailerFrom, mailerProvider } = require("../services/mailer");
+const { verifyMailer, isMailerConfigured, mailerFrom, mailerProvider, sendPasswordResetEmail } = require("../services/mailer");
+const { createResetToken } = require("../services/passwordReset");
 
 const ASSIGNABLE_ROLES = ["student", "teacher", "admin"];
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const publicUser = (u) => ({
   id: String(u.id),
   name: u.name,
   email: u.email,
   role: u.role,
+  phone: u.phone || "",
   studentId: u.student_id || "",
   major: u.major || "",
   year: u.year || "",
   department: u.department || "",
+  office: u.office || "",
+  isActive: u.is_active === undefined || u.is_active === null ? true : Boolean(Number(u.is_active)),
   createdAt: u.created_at ? String(u.created_at).slice(0, 10) : "",
 });
+
+// The list view intentionally leaves avatar out (it's a base64 blob) - only the single-user
+// detail fetch behind "view profile" needs it.
+const fullProfileUser = (u) => ({ ...publicUser(u), avatar: u.avatar || "" });
 
 const countOf = async (sql, params = []) => {
   const [rows] = await pool.query(sql, params);
   return Number(rows[0]?.total || 0);
 };
+
+// A deactivated admin can't log in, so they no longer count as "a way back in" - every guard
+// that used to just count role='admin' now needs to count active ones only.
+const countActiveAdmins = async (excludeId) =>
+  countOf(
+    `SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND is_active = 1${excludeId ? " AND id != ?" : ""}`,
+    excludeId ? [excludeId] : []
+  );
 
 // Tables owned by the academic module are created lazily on first use, so a fresh
 // database may not have them yet. Treat "not there yet" as zero rather than a 500.
@@ -72,7 +89,7 @@ exports.getUsers = async (req, res) => {
   }
 
   const [rows] = await pool.query(
-    `SELECT id, name, email, role, student_id, major, year, department, created_at
+    `SELECT id, name, email, role, phone, student_id, major, year, department, office, is_active, created_at
      FROM users
      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
      ORDER BY FIELD(role, 'admin', 'teacher', 'student'), name`,
@@ -80,6 +97,12 @@ exports.getUsers = async (req, res) => {
   );
 
   res.json(rows.map(publicUser));
+};
+
+exports.getUserById = async (req, res) => {
+  const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.params.id]);
+  if (!rows.length) return res.status(404).json({ message: "User not found" });
+  res.json(fullProfileUser(rows[0]));
 };
 
 exports.createUser = async (req, res) => {
@@ -121,8 +144,8 @@ exports.updateUserRole = async (req, res) => {
 
   // Never leave the platform with no way back in.
   if (target[0].role === "admin" && role !== "admin") {
-    const adminCount = await countOf("SELECT COUNT(*) AS total FROM users WHERE role = 'admin'");
-    if (adminCount <= 1) return res.status(400).json({ message: "Cannot demote the last remaining admin" });
+    const remaining = await countActiveAdmins(targetId);
+    if (remaining < 1) return res.status(400).json({ message: "Cannot demote the last remaining admin" });
   }
 
   await pool.query("UPDATE users SET role = ? WHERE id = ?", [role, targetId]);
@@ -140,12 +163,124 @@ exports.deleteUser = async (req, res) => {
   if (!target.length) return res.status(404).json({ message: "User not found" });
 
   if (target[0].role === "admin") {
-    const adminCount = await countOf("SELECT COUNT(*) AS total FROM users WHERE role = 'admin'");
-    if (adminCount <= 1) return res.status(400).json({ message: "Cannot delete the last remaining admin" });
+    const remaining = await countActiveAdmins(targetId);
+    if (remaining < 1) return res.status(400).json({ message: "Cannot delete the last remaining admin" });
   }
 
   await pool.query("DELETE FROM users WHERE id = ?", [targetId]);
   res.json({ message: "User deleted" });
+};
+
+exports.updateUserProfile = async (req, res) => {
+  const { name, phone, studentId, major, year, department, office } = req.body;
+  if (typeof name === "string" && !name.trim()) {
+    return res.status(400).json({ message: "Name cannot be empty" });
+  }
+
+  const [existingRows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.params.id]);
+  if (!existingRows.length) return res.status(404).json({ message: "User not found" });
+
+  const current = existingRows[0];
+  const next = {
+    name: typeof name === "string" && name.trim() ? name.trim() : current.name,
+    phone: phone !== undefined ? phone || null : current.phone,
+    studentId: studentId !== undefined ? studentId || null : current.student_id,
+    major: major !== undefined ? major || null : current.major,
+    year: year !== undefined ? year || null : current.year,
+    department: department !== undefined ? department || null : current.department,
+    office: office !== undefined ? office || null : current.office,
+  };
+
+  await pool.query(
+    `UPDATE users SET name = ?, phone = ?, student_id = ?, major = ?, year = ?, department = ?, office = ? WHERE id = ?`,
+    [next.name, next.phone, next.studentId, next.major, next.year, next.department, next.office, req.params.id]
+  );
+  const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.params.id]);
+  res.json(fullProfileUser(rows[0]));
+};
+
+exports.updateUserEmail = async (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.trim()) return res.status(400).json({ message: "Email is required" });
+
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!EMAIL_PATTERN.test(normalizedEmail)) {
+    return res.status(400).json({ message: "Enter a valid email address" });
+  }
+
+  const targetId = Number(req.params.id);
+  const [target] = await pool.query("SELECT id, email FROM users WHERE id = ?", [targetId]);
+  if (!target.length) return res.status(404).json({ message: "User not found" });
+  if (target[0].email === normalizedEmail) {
+    return res.json(fullProfileUser({ ...target[0], email: normalizedEmail }));
+  }
+
+  const [exists] = await pool.query("SELECT id FROM users WHERE email = ? AND id != ?", [normalizedEmail, targetId]);
+  if (exists.length) return res.status(409).json({ message: "Email already registered to another account" });
+
+  // This IS the login credential, not a separate profile field - the `users` row the login
+  // query reads from (authController.login: "SELECT * FROM users WHERE email = ?") is what
+  // gets updated here, by this admin-only endpoint. There's no separate auth store to fall
+  // out of sync with in this app. JWTs only carry id/role, so an existing session keeps
+  // working under the new address without needing to sign in again.
+  await pool.query("UPDATE users SET email = ? WHERE id = ?", [normalizedEmail, targetId]);
+  const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [targetId]);
+  res.json(fullProfileUser(rows[0]));
+};
+
+exports.setUserActive = async (req, res) => {
+  const { isActive } = req.body;
+  if (typeof isActive !== "boolean") return res.status(400).json({ message: "isActive must be true or false" });
+
+  const targetId = Number(req.params.id);
+  if (targetId === Number(req.user.id) && !isActive) {
+    return res.status(400).json({ message: "You cannot deactivate your own account" });
+  }
+
+  const [target] = await pool.query("SELECT id, role FROM users WHERE id = ?", [targetId]);
+  if (!target.length) return res.status(404).json({ message: "User not found" });
+
+  if (target[0].role === "admin" && !isActive) {
+    const remaining = await countActiveAdmins(targetId);
+    if (remaining < 1) return res.status(400).json({ message: "Cannot deactivate the last active admin" });
+  }
+
+  await pool.query("UPDATE users SET is_active = ? WHERE id = ?", [isActive ? 1 : 0, targetId]);
+  const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [targetId]);
+  res.json(publicUser(rows[0]));
+};
+
+exports.sendResetEmail = async (req, res) => {
+  const [target] = await pool.query("SELECT id, name, email FROM users WHERE id = ?", [req.params.id]);
+  if (!target.length) return res.status(404).json({ message: "User not found" });
+
+  if (!isMailerConfigured) {
+    return res.status(400).json({ message: 'Email delivery isn\'t configured. Use "Set password" to reset it directly instead.' });
+  }
+
+  const created = await createResetToken(target[0].email, req.ip);
+  if (!created) {
+    return res.status(500).json({ message: "Could not start a reset for this account" });
+  }
+
+  const base = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "http://localhost:8080").split(",")[0].trim();
+  const resetUrl = `${base}/reset-password?token=${encodeURIComponent(created.token)}`;
+
+  // Unlike the public forgot-password endpoint, this doesn't need to hide whether the
+  // account exists (the admin already knows - they're looking right at it) or fire in the
+  // background for timing safety, so it can just await the send and report what happened.
+  try {
+    await sendPasswordResetEmail({
+      to: created.user.email,
+      name: created.user.name,
+      resetUrl,
+      expiresInMinutes: created.expiresInMinutes,
+    });
+  } catch (error) {
+    return res.status(502).json({ message: `Could not send the email: ${error.message}` });
+  }
+
+  res.json({ message: `Reset link sent to ${target[0].email}` });
 };
 
 exports.setUserPassword = async (req, res) => {
