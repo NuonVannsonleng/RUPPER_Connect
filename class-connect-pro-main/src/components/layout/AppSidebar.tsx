@@ -43,11 +43,14 @@ const teacherNav = [
   { title: "Settings",      url: "/settings",      icon: Settings },
 ];
 
+// Admin is the fallback path when a teacher account is stuck, so admin's nav is the admin-only
+// tools plus every page a teacher can reach - not a separate, narrower set.
 const adminNav = [
-  { title: "Overview",     url: "/admin",         icon: ShieldCheck },
-  { title: "Users",        url: "/admin/users",   icon: UserCog },
-  { title: "Courses",      url: "/admin/courses", icon: BookOpenCheck },
-  { title: "Settings",     url: "/settings",      icon: Settings },
+  { title: "Overview",         url: "/admin",         icon: ShieldCheck },
+  { title: "Users",            url: "/admin/users",   icon: UserCog },
+  { title: "Course oversight", url: "/admin/courses", icon: BookOpenCheck },
+  ...teacherNav.filter((item) => item.url !== "/settings"),
+  { title: "Settings",         url: "/settings",      icon: Settings },
 ];
 
 const studentNav = [

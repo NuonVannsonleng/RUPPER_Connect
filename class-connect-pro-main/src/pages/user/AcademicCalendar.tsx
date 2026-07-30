@@ -56,7 +56,7 @@ const NO_COURSE = "none";
 const emptyEventForm = { title: "", date: "", type: "event", priority: "normal", courseId: NO_COURSE };
 
 export default function AcademicCalendar() {
-  const { role } = useRole();
+  const { canTeach } = useRole();
   const queryClient = useQueryClient();
   const { data: events = [], isFetching } = useAcademicCalendar();
   const { data: courses = [] } = useAcademicCourses();
@@ -151,7 +151,7 @@ export default function AcademicCalendar() {
         title="Academic calendar"
         description="Track exams, assignments, holidays, university events, and important academic dates."
         actions={
-          role === "teacher" ? (
+          canTeach ? (
             <Button size="sm" variant="secondary" className="font-semibold" onClick={openDialog}>
               <Plus className="mr-2 h-4 w-4" />
               Add event
@@ -209,6 +209,7 @@ export default function AcademicCalendar() {
                     <p className="mt-1 text-sm text-muted-foreground">
                       {event.course ? `${event.course} - ` : ""}
                       {event.date}
+                      {event.createdByName ? ` - added by ${event.createdByName}` : ""}
                     </p>
                   </div>
                 </div>
@@ -220,7 +221,7 @@ export default function AcademicCalendar() {
                   )}
                   <Badge className={`border ${typeTone[event.type]}`}>{event.type}</Badge>
                   <Badge variant="outline">{event.priority}</Badge>
-                  {role === "teacher" && (
+                  {canTeach && (
                     <div className="ml-1 flex items-center gap-1">
                       <Button
                         variant="ghost"

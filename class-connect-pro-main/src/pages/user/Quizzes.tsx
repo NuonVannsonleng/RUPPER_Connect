@@ -31,7 +31,7 @@ const statusTone = {
 };
 
 export default function Quizzes() {
-  const { role } = useRole();
+  const { canTeach } = useRole();
   const queryClient = useQueryClient();
   const { data: quizzes = [], isFetching, dataUpdatedAt } = useAcademicQuizzes();
   const { data: courses = [] } = useAcademicCourses();
@@ -40,7 +40,7 @@ export default function Quizzes() {
   const [newQuiz, setNewQuiz] = useState({ courseId: "", title: "", description: "", timeLimit: "20", status: "available" });
   const [isCreatingQuiz, setIsCreatingQuiz] = useState(false);
   const [submittingQuizId, setSubmittingQuizId] = useState<string | null>(null);
-  const isTeacher = role === "teacher";
+  const isTeacher = canTeach;
   // The list starts out showing hardcoded placeholder data (ids like "q1") while the real
   // request is in flight - dataUpdatedAt stays 0 until that first real response lands
   // (see initialDataUpdatedAt: 0 in App.tsx). Acting on the placeholder rows crashes the
@@ -159,6 +159,9 @@ export default function Quizzes() {
               <div>
                 <Badge variant="outline">{quiz.courseCode}</Badge>
                 <h2 className="mt-3 font-display text-xl font-bold text-foreground">{quiz.title}</h2>
+                {quiz.createdByName && (
+                  <p className="mt-1 text-xs text-muted-foreground">Created by {quiz.createdByName}</p>
+                )}
               </div>
               <Badge className={`border ${statusTone[quiz.status]}`}>{quiz.status}</Badge>
             </div>

@@ -44,6 +44,10 @@ export interface AdminCourse {
   department: string;
   semester: string;
   status: string;
+  credits: number;
+  room: string;
+  schedule: string;
+  description: string;
   lecturerId: string;
   lecturerName: string;
   students: number;

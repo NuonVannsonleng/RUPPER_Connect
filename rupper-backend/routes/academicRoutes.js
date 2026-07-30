@@ -9,6 +9,10 @@ router.post("/courses", auth, requireTeacher, asyncHandler(c.createCourse));
 router.post("/courses/:courseId/materials", auth, requireTeacher, asyncHandler(c.createMaterial));
 router.get("/materials/:id/download", auth, asyncHandler(c.downloadMaterial));
 
+router.get("/courses/:courseId/enrollments", auth, requireTeacher, asyncHandler(c.getCourseEnrollments));
+router.post("/courses/:courseId/enrollments", auth, requireTeacher, asyncHandler(c.enrollStudent));
+router.delete("/courses/:courseId/enrollments/:studentId", auth, requireTeacher, asyncHandler(c.unenrollStudent));
+
 router.get("/assignments", auth, asyncHandler(c.getAssignments));
 router.post("/assignments", auth, requireTeacher, asyncHandler(c.createAssignment));
 router.post("/assignments/:id/submissions", auth, asyncHandler(c.submitAssignment));

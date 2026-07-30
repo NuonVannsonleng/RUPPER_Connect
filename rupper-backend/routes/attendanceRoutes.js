@@ -7,5 +7,5 @@ router.get("/students", auth, asyncHandler(c.getStudents));
 router.get("/summary", auth, asyncHandler(c.getMySummary));
 router.get("/class-summary", auth, requireTeacher, asyncHandler(c.getClassSummary));
 router.get("/", auth, asyncHandler(c.getAttendance));
-router.post("/", auth, asyncHandler(c.saveAttendance));
+router.post("/", auth, requireTeacher, asyncHandler(c.saveAttendance));
 module.exports = router;

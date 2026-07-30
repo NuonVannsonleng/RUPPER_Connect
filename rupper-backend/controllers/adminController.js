@@ -360,6 +360,7 @@ exports.getCourses = async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT c.id, c.code, c.title, c.faculty, c.department, c.semester, c.status,
+              c.credits, c.room, c.schedule_label AS scheduleLabel, c.description,
               c.lecturer_id AS lecturerId, u.name AS lecturerName,
               (SELECT COUNT(*) FROM course_enrollments e WHERE e.course_id = c.id) AS students
        FROM courses c
@@ -375,6 +376,10 @@ exports.getCourses = async (req, res) => {
         department: row.department || "",
         semester: row.semester || "",
         status: row.status,
+        credits: Number(row.credits || 3),
+        room: row.room || "",
+        schedule: row.scheduleLabel || "",
+        description: row.description || "",
         lecturerId: row.lecturerId ? String(row.lecturerId) : "",
         lecturerName: row.lecturerName || "Unassigned",
         students: Number(row.students || 0),
@@ -384,6 +389,50 @@ exports.getCourses = async (req, res) => {
     if (error.code === "ER_NO_SUCH_TABLE") return res.json([]);
     throw error;
   }
+};
+
+exports.updateCourse = async (req, res) => {
+  const { code, title, faculty, department, credits, semester, room, schedule, description, status } = req.body;
+  if (!code || !title) return res.status(400).json({ message: "code and title are required" });
+
+  const validStatuses = ["active", "completed", "archived"];
+  if (status && !validStatuses.includes(status)) {
+    return res.status(400).json({ message: "Invalid status" });
+  }
+
+  const normalizedCode = code.trim().toUpperCase();
+  const [existing] = await pool.query("SELECT id FROM courses WHERE id = ?", [req.params.id]);
+  if (!existing.length) return res.status(404).json({ message: "Course not found" });
+
+  const [duplicate] = await pool.query("SELECT id FROM courses WHERE code = ? AND id != ?", [normalizedCode, req.params.id]);
+  if (duplicate.length) return res.status(409).json({ message: `A course with code "${normalizedCode}" already exists.` });
+
+  await pool.query(
+    `UPDATE courses
+     SET code = ?, title = ?, faculty = ?, department = ?, credits = ?, semester = ?, room = ?, schedule_label = ?, description = ?, status = ?
+     WHERE id = ?`,
+    [
+      normalizedCode,
+      title.trim(),
+      faculty || null,
+      department || null,
+      credits || 3,
+      semester || null,
+      room || null,
+      schedule || null,
+      description || null,
+      status || "active",
+      req.params.id,
+    ]
+  );
+
+  res.json({ message: "Course updated" });
+};
+
+exports.deleteCourse = async (req, res) => {
+  const [result] = await pool.query("DELETE FROM courses WHERE id = ?", [req.params.id]);
+  if (!result.affectedRows) return res.status(404).json({ message: "Course not found" });
+  res.json({ message: "Course deleted" });
 };
 
 exports.assignCourseLecturer = async (req, res) => {

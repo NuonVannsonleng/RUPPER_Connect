@@ -44,7 +44,10 @@ const subjectTone = (subject: string) => {
 };
 
 export default function Schedule() {
-  const { role } = useRole();
+  const { role, canTeach } = useRole();
+  // Schedule entries are tagged "student"/"teacher"/"both" - admin substituting for a teacher
+  // needs to see teacher-visibility sessions too, which a literal role match would miss.
+  const effectiveVisibilityRole = canTeach ? "teacher" : role;
   const queryClient = useQueryClient();
   const { data: sessions = [], isError } = useSchedule();
   const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
@@ -68,9 +71,9 @@ export default function Schedule() {
   const visibleSessions = useMemo(
     () =>
       sessions.filter(
-        (session) => session.roleVisibility === "both" || session.roleVisibility === role
+        (session) => session.roleVisibility === "both" || session.roleVisibility === effectiveVisibilityRole
       ),
-    [role, sessions]
+    [effectiveVisibilityRole, sessions]
   );
 
   const grouped = useMemo(() => {
@@ -184,12 +187,12 @@ export default function Schedule() {
         eyebrow="Weekly view"
         title="Class schedule"
         description={
-          role === "teacher"
+          canTeach
             ? "Manage your timetable, rooms, and class visibility from one place."
             : "Your weekly classes - never miss a session."
         }
         actions={
-          role === "teacher" ? (
+          canTeach ? (
             <Button size="sm" variant="secondary" className="font-semibold" onClick={openCreate}>
               <Plus className="mr-1.5 h-4 w-4" />
               New class
@@ -306,7 +309,7 @@ export default function Schedule() {
                         <Clock className="h-3 w-3" />
                         {session.time}
                       </p>
-                      {role === "teacher" && (
+                      {canTeach && (
                         <div className="flex shrink-0 gap-1 opacity-100 xl:opacity-0 xl:transition-base xl:group-hover:opacity-100">
                           <Button
                             variant="ghost"

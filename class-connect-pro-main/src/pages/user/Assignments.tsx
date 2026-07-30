@@ -37,6 +37,7 @@ interface AssignmentSubmission {
   score?: number;
   feedback?: string;
   submittedAt?: string;
+  gradedByName?: string;
 }
 
 const assignmentTone = {
@@ -105,7 +106,7 @@ async function downloadSubmissionFile(downloadUrl: string, fileName?: string) {
 }
 
 export default function Assignments() {
-  const { role } = useRole();
+  const { canTeach } = useRole();
   const queryClient = useQueryClient();
   const { data: assignments = [], isFetching } = useAcademicAssignments();
   const { data: courses = [] } = useAcademicCourses();
@@ -118,7 +119,7 @@ export default function Assignments() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newAssignment, setNewAssignment] = useState({ courseId: "", title: "", description: "", deadline: "", maxScore: "100" });
   const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
-  const isTeacher = role === "teacher";
+  const isTeacher = canTeach;
   const pending = assignments.filter((item) => item.status === "pending").length;
   const submitted = assignments.filter((item) => item.status === "submitted" || item.status === "graded").length;
   const missing = assignments.filter((item) => item.status === "missing").length;
@@ -283,7 +284,10 @@ export default function Assignments() {
                     <Badge variant="secondary">Max {assignment.maxScore} pts</Badge>
                   </div>
                   <h2 className="font-display text-xl font-bold text-foreground">{assignment.title}</h2>
-                  <p className="mt-2 text-sm text-muted-foreground">Deadline: {assignment.deadline}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Deadline: {assignment.deadline}
+                    {assignment.createdByName ? ` - created by ${assignment.createdByName}` : ""}
+                  </p>
 
                   {assignment.feedback && (
                     <div className="mt-4 rounded-xl border border-primary/20 bg-primary/10 p-4">
@@ -456,9 +460,14 @@ export default function Assignments() {
                       <p className="font-semibold text-foreground">{submission.studentName}</p>
                       <p className="text-xs text-muted-foreground">{submission.studentEmail}</p>
                     </div>
-                    <Badge className={`border ${assignmentTone[submission.status as keyof typeof assignmentTone] || ""}`}>
-                      {submission.status}
-                    </Badge>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge className={`border ${assignmentTone[submission.status as keyof typeof assignmentTone] || ""}`}>
+                        {submission.status}
+                      </Badge>
+                      {submission.gradedByName && (
+                        <span className="text-[11px] text-muted-foreground">Graded by {submission.gradedByName}</span>
+                      )}
+                    </div>
                   </div>
                   {submission.downloadUrl ? (
                     <button

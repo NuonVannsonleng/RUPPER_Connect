@@ -56,7 +56,7 @@ const chartSuccess = "hsl(var(--success))";
 const chartMuted = "hsl(var(--muted-foreground))";
 
 export default function Dashboard() {
-  const { role } = useRole();
+  const { role, canTeach } = useRole();
   const { user } = useAuth();
   const { data: announcementItems = [] } = useAnnouncements();
   const { data: scheduleItems = [] } = useSchedule();
@@ -67,11 +67,14 @@ export default function Dashboard() {
   const { data: studentRiskAlerts = [] } = useAcademicRiskAlerts();
   const { data: transcriptRecords = [] } = useAcademicTranscript();
   const { data: attendanceSummary } = useAttendanceSummary();
-  const { data: classAttendanceSummary } = useClassAttendanceSummary(role === "teacher");
+  const { data: classAttendanceSummary } = useClassAttendanceSummary(canTeach);
 
   const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  // Admin substituting for a teacher needs teacher-visibility sessions too, which a literal
+  // role match would miss.
+  const effectiveVisibilityRole = canTeach ? "teacher" : role;
   const visibleSchedule = scheduleItems.filter(
-    (session) => session.roleVisibility === "both" || session.roleVisibility === role
+    (session) => session.roleVisibility === "both" || session.roleVisibility === effectiveVisibilityRole
   );
   const todaysClasses = visibleSchedule
     .filter((session) => session.day === today)
@@ -100,7 +103,7 @@ export default function Dashboard() {
       }))
     : gradePerformance;
 
-  if (role === "teacher") {
+  if (canTeach) {
     return (
       <div className="space-y-6 sm:space-y-8">
         <Hero

@@ -22,6 +22,8 @@ router.post("/users/:id/send-reset-email", asyncHandler(c.sendResetEmail));
 router.delete("/users/:id", asyncHandler(c.deleteUser));
 
 router.get("/courses", asyncHandler(c.getCourses));
+router.put("/courses/:id", asyncHandler(c.updateCourse));
+router.delete("/courses/:id", asyncHandler(c.deleteCourse));
 router.put("/courses/:id/lecturer", asyncHandler(c.assignCourseLecturer));
 
 module.exports = router;

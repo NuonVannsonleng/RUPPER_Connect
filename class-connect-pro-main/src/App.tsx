@@ -88,10 +88,14 @@ const App = () => (
                   <Route path="/oauth/callback" element={<OAuthCallback />} />
                   <Route path="/faculty/:facultyId" element={<FacultyDetail />} />
 
-                  {/* Teacher + student area */}
+                  {/* Teacher + student area. Admin is allowed in here too: this is the
+                      fallback path for a teacher account that's stuck, and every page in
+                      this block already branches on canTeach (role teacher OR admin) rather
+                      than a literal "teacher" check, so admin gets the same actions instead
+                      of a separate duplicated screen. */}
                   <Route
                     element={
-                      <ProtectedRoute allow={["teacher", "student"]}>
+                      <ProtectedRoute allow={["teacher", "student", "admin"]}>
                         <AppLayout />
                       </ProtectedRoute>
                     }

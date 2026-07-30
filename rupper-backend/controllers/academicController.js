@@ -129,6 +129,7 @@ const ensureAcademicSchemaLocked = async () => {
       status ENUM('submitted','late','missing','graded') DEFAULT 'submitted',
       score DECIMAL(6,2),
       feedback TEXT,
+      graded_by INT NULL,
       submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       graded_at TIMESTAMP NULL,
       UNIQUE KEY unique_assignment_submission (assignment_id, student_id),
@@ -256,6 +257,9 @@ const ensureAcademicSchemaLocked = async () => {
     file_mime: "VARCHAR(150) NULL",
     file_data: "LONGBLOB NULL",
     file_size: "INT NULL",
+    // Who actually graded it - matters once admin can grade on a teacher's behalf, so the
+    // record reflects the real actor rather than only the course's assigned lecturer.
+    graded_by: "INT NULL",
   };
   const [existingSubmissionColumns] = await pool.query(
     "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'assignment_submissions'"
@@ -438,12 +442,27 @@ exports.getCourses = async (req, res) => {
   if (!ids.length) return res.json([]);
 
   const [materials] = await pool.query(
-    `SELECT id, course_id, title, material_type, file_url, file_name, file_size, created_at
-     FROM course_materials WHERE course_id IN (?) ORDER BY created_at DESC`,
+    `SELECT m.id, m.course_id, m.title, m.material_type, m.file_url, m.file_name, m.file_size, m.created_at,
+      creator.name AS createdByName
+     FROM course_materials m
+     LEFT JOIN users creator ON creator.id = m.created_by
+     WHERE m.course_id IN (?) ORDER BY m.created_at DESC`,
     [ids]
   );
-  const [assignments] = await pool.query("SELECT * FROM course_assignments WHERE course_id IN (?) ORDER BY deadline", [ids]);
-  const [quizzes] = await pool.query("SELECT * FROM quizzes WHERE course_id IN (?) ORDER BY created_at DESC", [ids]);
+  const [assignments] = await pool.query(
+    `SELECT a.*, creator.name AS createdByName
+     FROM course_assignments a
+     LEFT JOIN users creator ON creator.id = a.created_by
+     WHERE a.course_id IN (?) ORDER BY a.deadline`,
+    [ids]
+  );
+  const [quizzes] = await pool.query(
+    `SELECT q.*, creator.name AS createdByName
+     FROM quizzes q
+     LEFT JOIN users creator ON creator.id = q.created_by
+     WHERE q.course_id IN (?) ORDER BY q.created_at DESC`,
+    [ids]
+  );
   const [metrics] = await pool.query(
     `SELECT course_id, AVG(progress) AS progress, AVG(attendance_percentage) AS attendance, AVG(current_grade) AS grade
      FROM course_enrollments WHERE course_id IN (?) GROUP BY course_id`,
@@ -462,6 +481,7 @@ exports.getCourses = async (req, res) => {
       fileSize: item.file_size || undefined,
       fileUrl: item.material_type === "link" ? item.file_url || undefined : undefined,
       downloadUrl: item.file_name ? `/academic/materials/${item.id}/download` : undefined,
+      createdByName: item.createdByName || undefined,
     });
     materialMap.set(item.course_id, list);
   });
@@ -478,6 +498,7 @@ exports.getCourses = async (req, res) => {
       maxScore: Number(item.max_score || 100),
       status: "pending",
       submissionCount: 0,
+      createdByName: item.createdByName || undefined,
     });
     assignmentMap.set(item.course_id, list);
   });
@@ -495,6 +516,7 @@ exports.getCourses = async (req, res) => {
       timeLimit: Number(item.time_limit_minutes || 20),
       status: item.status === "draft" ? "draft" : "available",
       averageScore: 0,
+      createdByName: item.createdByName || undefined,
     });
     quizMap.set(item.course_id, list);
   });
@@ -618,11 +640,60 @@ exports.downloadMaterial = async (req, res) => {
   res.send(material.file_data);
 };
 
+exports.getCourseEnrollments = async (req, res) => {
+  await ensureAcademicSchema();
+  const courseId = await resolveCourseId(req.params.courseId);
+  if (!courseId) return res.status(404).json({ message: "Course not found" });
+
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.email, u.student_id AS studentId
+     FROM course_enrollments ce
+     JOIN users u ON u.id = ce.student_id
+     WHERE ce.course_id = ?
+     ORDER BY u.name`,
+    [courseId]
+  );
+  res.json(rows.map((row) => ({ id: String(row.id), name: row.name, email: row.email, studentId: row.studentId || "" })));
+};
+
+exports.enrollStudent = async (req, res) => {
+  await ensureAcademicSchema();
+  const courseId = await resolveCourseId(req.params.courseId);
+  if (!courseId) return res.status(404).json({ message: "Course not found" });
+
+  const { studentId } = req.body;
+  if (!studentId) return res.status(400).json({ message: "studentId is required" });
+
+  const [student] = await pool.query("SELECT id, role FROM users WHERE id = ?", [studentId]);
+  if (!student.length) return res.status(404).json({ message: "Student not found" });
+  if (student[0].role !== "student") return res.status(400).json({ message: "Only students can be enrolled" });
+
+  await pool.query(
+    `INSERT INTO course_enrollments (course_id, student_id) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE student_id = VALUES(student_id)`,
+    [courseId, studentId]
+  );
+  res.status(201).json({ message: "Student enrolled" });
+};
+
+exports.unenrollStudent = async (req, res) => {
+  await ensureAcademicSchema();
+  const courseId = await resolveCourseId(req.params.courseId);
+  if (!courseId) return res.status(404).json({ message: "Course not found" });
+
+  const [result] = await pool.query("DELETE FROM course_enrollments WHERE course_id = ? AND student_id = ?", [
+    courseId,
+    req.params.studentId,
+  ]);
+  if (!result.affectedRows) return res.status(404).json({ message: "Enrollment not found" });
+  res.json({ message: "Student removed from course" });
+};
+
 exports.getAssignments = async (req, res) => {
   await seedAcademicData(req.user);
 
   const [rows] = await pool.query(
-    `SELECT a.*, c.code AS courseCode,
+    `SELECT a.*, c.code AS courseCode, creator.name AS createdByName,
       COUNT(s.id) AS submissionCount,
       mine.id AS submissionId,
       mine.status AS submissionStatus,
@@ -632,9 +703,10 @@ exports.getAssignments = async (req, res) => {
       mine.submitted_at AS submittedAt
      FROM course_assignments a
      JOIN courses c ON a.course_id = c.id
+     LEFT JOIN users creator ON creator.id = a.created_by
      LEFT JOIN assignment_submissions s ON s.assignment_id = a.id
      LEFT JOIN assignment_submissions mine ON mine.assignment_id = a.id AND mine.student_id = ?
-     GROUP BY a.id, c.code, mine.id, mine.status, mine.score, mine.feedback, mine.file_name, mine.submitted_at
+     GROUP BY a.id, c.code, creator.name, mine.id, mine.status, mine.score, mine.feedback, mine.file_name, mine.submitted_at
      ORDER BY a.deadline`,
     [req.user.id]
   );
@@ -655,6 +727,7 @@ exports.getAssignments = async (req, res) => {
       submissionId: row.submissionId ? String(row.submissionId) : undefined,
       fileName: row.fileName || undefined,
       downloadUrl: row.submissionId ? `/academic/assignment-submissions/${row.submissionId}/download` : undefined,
+      createdByName: row.createdByName || undefined,
     }))
   );
 };
@@ -729,9 +802,11 @@ exports.getAssignmentSubmissions = async (req, res) => {
   await ensureAcademicSchema();
   const [rows] = await pool.query(
     `SELECT s.id, s.student_id AS studentId, u.name AS studentName, u.email AS studentEmail,
-      s.file_name AS fileName, s.file_size AS fileSize, s.status, s.score, s.feedback, s.submitted_at AS submittedAt
+      s.file_name AS fileName, s.file_size AS fileSize, s.status, s.score, s.feedback, s.submitted_at AS submittedAt,
+      grader.name AS gradedByName
      FROM assignment_submissions s
      JOIN users u ON u.id = s.student_id
+     LEFT JOIN users grader ON grader.id = s.graded_by
      WHERE s.assignment_id = ?
      ORDER BY s.submitted_at DESC`,
     [req.params.id]
@@ -750,6 +825,7 @@ exports.getAssignmentSubmissions = async (req, res) => {
       score: row.score === null ? undefined : Number(row.score),
       feedback: row.feedback || undefined,
       submittedAt: row.submittedAt ? dateOnly(row.submittedAt) : undefined,
+      gradedByName: row.gradedByName || undefined,
     }))
   );
 };
@@ -778,8 +854,8 @@ exports.gradeSubmission = async (req, res) => {
   const { score, feedback } = req.body;
   if (score === undefined) return res.status(400).json({ message: "score is required" });
   const [result] = await pool.query(
-    "UPDATE assignment_submissions SET score = ?, feedback = ?, status = 'graded', graded_at = CURRENT_TIMESTAMP WHERE id = ?",
-    [score, feedback || null, req.params.id]
+    "UPDATE assignment_submissions SET score = ?, feedback = ?, status = 'graded', graded_at = CURRENT_TIMESTAMP, graded_by = ? WHERE id = ?",
+    [score, feedback || null, req.user.id, req.params.id]
   );
   if (!result.affectedRows) return res.status(404).json({ message: "Submission not found" });
   res.json({ message: "Submission graded" });
@@ -794,13 +870,14 @@ exports.getQuizzes = async (req, res) => {
   // that; "mine" additionally pins to a single row via the latest attempt (highest id) so a
   // retake doesn't duplicate the quiz in the list.
   const [rows] = await pool.query(
-    `SELECT q.*, c.code AS courseCode,
+    `SELECT q.*, c.code AS courseCode, creator.name AS createdByName,
       COALESCE(qc.questionCount, 0) AS questionCount,
       qc.questionTypes,
       ac.averageScore,
       mine.score AS myScore
      FROM quizzes q
      JOIN courses c ON q.course_id = c.id
+     LEFT JOIN users creator ON creator.id = q.created_by
      LEFT JOIN (
        SELECT quiz_id, COUNT(*) AS questionCount, GROUP_CONCAT(DISTINCT question_type) AS questionTypes
        FROM quiz_questions
@@ -835,6 +912,7 @@ exports.getQuizzes = async (req, res) => {
         status: row.myScore !== null && row.myScore !== undefined ? "completed" : row.status === "draft" ? "draft" : "available",
         score: row.myScore === null || row.myScore === undefined ? undefined : Number(row.myScore),
         averageScore: Math.round(Number(row.averageScore || 0)),
+        createdByName: row.createdByName || undefined,
       };
     })
   );
@@ -893,9 +971,10 @@ exports.submitQuizAttempt = async (req, res) => {
 exports.getCalendarEvents = async (req, res) => {
   await seedAcademicData(req.user);
   const [rows] = await pool.query(
-    `SELECT e.*, c.code AS courseCode
+    `SELECT e.*, c.code AS courseCode, creator.name AS createdByName
      FROM academic_calendar_events e
      LEFT JOIN courses c ON e.course_id = c.id
+     LEFT JOIN users creator ON creator.id = e.created_by
      ORDER BY e.event_date`
   );
 
@@ -908,6 +987,7 @@ exports.getCalendarEvents = async (req, res) => {
       course: row.courseCode || undefined,
       courseId: row.course_id ? String(row.course_id) : undefined,
       priority: row.priority || "normal",
+      createdByName: row.createdByName || undefined,
     }))
   );
 };
@@ -1037,7 +1117,10 @@ exports.getRiskAlerts = async (req, res) => {
 };
 
 exports.getContacts = async (req, res) => {
-  const oppositeRole = req.user.role === "teacher" ? "student" : "teacher";
+  // Framed around "who am I not" rather than "am I a teacher": an admin substituting for a
+  // teacher isn't literally role "teacher", but they still need student contacts, not other
+  // teachers'. Only a student should ever see the teacher list.
+  const oppositeRole = req.user.role === "student" ? "teacher" : "student";
   const [rows] = await pool.query(
     "SELECT id, name, email, role FROM users WHERE role = ? AND id <> ? ORDER BY name",
     [oppositeRole, req.user.id]
@@ -1080,7 +1163,7 @@ exports.createMessage = async (req, res) => {
 
   let nextReceiverId = receiverId;
   if (!nextReceiverId) {
-    const oppositeRole = req.user.role === "teacher" ? "student" : "teacher";
+    const oppositeRole = req.user.role === "student" ? "teacher" : "student";
     const [users] = await pool.query("SELECT id FROM users WHERE role = ? AND id <> ? ORDER BY id LIMIT 1", [oppositeRole, req.user.id]);
     nextReceiverId = users[0]?.id || req.user.id;
   }

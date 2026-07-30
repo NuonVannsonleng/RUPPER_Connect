@@ -12,6 +12,7 @@ export interface AcademicMaterial {
   fileSize?: number;
   fileUrl?: string;
   downloadUrl?: string;
+  createdByName?: string;
 }
 
 export interface AcademicAssignment {
@@ -29,6 +30,7 @@ export interface AcademicAssignment {
   submissionId?: string;
   fileName?: string;
   downloadUrl?: string;
+  createdByName?: string;
 }
 
 export interface AcademicQuiz {
@@ -42,6 +44,7 @@ export interface AcademicQuiz {
   status: "available" | "completed" | "draft";
   score?: number;
   averageScore: number;
+  createdByName?: string;
 }
 
 export interface AcademicCourse {
@@ -93,6 +96,7 @@ export interface AcademicCalendarEvent {
   course?: string;
   courseId?: string;
   priority: PriorityLevel;
+  createdByName?: string;
 }
 
 export interface MessageThread {

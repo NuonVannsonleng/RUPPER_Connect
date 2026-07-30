@@ -64,7 +64,7 @@ const getPriority = (category: Announcement["category"]): AnnouncementPriority =
 };
 
 export default function Announcements() {
-  const { role } = useRole();
+  const { role, canTeach } = useRole();
   const queryClient = useQueryClient();
   const { data: loadedItems = [], isError } = useAnnouncements();
   const [items, setItems] = useState<Announcement[]>(loadedItems);
@@ -195,12 +195,12 @@ export default function Announcements() {
         eyebrow="Communication"
         title="Announcements"
         description={
-          role === "teacher"
+          canTeach
             ? "Broadcast updates, reminders and urgent notices to your students."
             : "Updates from your teachers and the academic office."
         }
         actions={
-          role === "teacher" ? (
+          canTeach ? (
             <Button size="sm" variant="secondary" className="font-semibold" onClick={openCreate}>
               <Plus className="mr-1.5 h-4 w-4" />
               New announcement
@@ -344,7 +344,7 @@ export default function Announcements() {
                 </div>
                 <div className="flex items-center gap-1">
                   {pinned && <Pin className="h-4 w-4 fill-accent text-accent" />}
-                  {role === "teacher" && (
+                  {canTeach && (
                     <>
                       <Button
                         variant="ghost"

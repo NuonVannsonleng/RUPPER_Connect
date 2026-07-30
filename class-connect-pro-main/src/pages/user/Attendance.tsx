@@ -71,7 +71,7 @@ const formatStudent = (student: ApiStudent): RosterStudent => ({
 });
 
 export default function Attendance() {
-  const { role } = useRole();
+  const { role, canTeach } = useRole();
   const { data: mySummary } = useAttendanceSummary();
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
@@ -84,7 +84,7 @@ export default function Attendance() {
   const [scanCode, setScanCode] = useState("");
 
   useEffect(() => {
-    if (role !== "teacher") return;
+    if (!canTeach) return;
 
     let active = true;
 
@@ -122,7 +122,7 @@ export default function Attendance() {
     return () => {
       active = false;
     };
-  }, [date, role]);
+  }, [date, canTeach]);
 
   const setStatus = (id: string, status: Status) =>
     setRecords((prev) => ({ ...prev, [id]: status }));
