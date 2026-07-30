@@ -50,6 +50,7 @@ app.use("/api/schedules", require("./routes/scheduleRoutes"));
 app.use("/api/students", require("./routes/studentRoutes"));
 app.use("/api/academic", require("./routes/academicRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
+app.use("/api/notifications", require("./routes/notificationRoutes"));
 
 app.use((err, req, res, next) => {
   console.error(err);

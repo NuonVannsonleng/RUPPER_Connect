@@ -224,6 +224,15 @@ CREATE TABLE IF NOT EXISTS announcement_reads (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS notification_reads (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  notification_key VARCHAR(120) NOT NULL,
+  read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_notification_read (user_id, notification_key),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS attendance_sessions (
   id INT AUTO_INCREMENT PRIMARY KEY,
   course_id INT,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -11,6 +11,8 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -21,8 +23,12 @@ import { useRole } from "@/context/RoleContext";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import type { Announcement } from "@/data/mockData";
-import { useAnnouncements } from "@/hooks/useAnnouncements";
+import { ANNOUNCEMENTS_QUERY_KEY, useAnnouncements } from "@/hooks/useAnnouncements";
+import { NOTIFICATION_READS_QUERY_KEY, useNotificationReads } from "@/hooks/useNotificationReads";
+import { apiRequest } from "@/lib/api";
 import { GlobalSearch } from "./GlobalSearch";
+
+const ANNOUNCEMENT_ID_PREFIX = "announcement-";
 
 type NotificationItem = {
   id: string;
@@ -32,6 +38,10 @@ type NotificationItem = {
   path: string;
   icon: LucideIcon;
   accent: string;
+  /** Only set for announcement-backed items - their read state comes from the announcements
+   *  API itself (announcement_reads) rather than the generic notification_reads table, so the
+   *  bell dropdown and the Announcements page never disagree about the same announcement. */
+  isRead?: boolean;
 };
 
 const getAnnouncementAccent = (category?: string) => {
@@ -43,13 +53,14 @@ const getAnnouncementAccent = (category?: string) => {
 
 const buildNotifications = (role: string, announcementItems: Announcement[]): NotificationItem[] => {
   const recentAnnouncements = announcementItems.slice(0, 2).map((announcement) => ({
-    id: `announcement-${announcement.id}`,
+    id: `${ANNOUNCEMENT_ID_PREFIX}${announcement.id}`,
     title: announcement.title,
     body: announcement.body,
     time: announcement.date,
     path: "/announcements",
     icon: Megaphone,
     accent: getAnnouncementAccent(announcement.category),
+    isRead: announcement.isRead,
   }));
 
   // Admins don't have the teaching/learning pages, so point them at their own area
@@ -128,9 +139,24 @@ export function AppHeader() {
   const { role, user } = useRole();
   const { logout, user: authUser } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: announcementItems = [] } = useAnnouncements();
-  const [readIds, setReadIds] = useState<string[]>([]);
+  // Persisted read state for the synthetic, per-role items ("attendance-today" and friends)
+  // that have no database row of their own - announcement-backed items instead carry their
+  // own isRead straight from the announcements API. readIds is a local optimistic overlay on
+  // top of that persisted data: seeded from it on load/refetch below, added to immediately on
+  // click for a responsive UI, and rolled back if the write fails.
+  const { data: persistedReadKeys = [] } = useNotificationReads();
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setReadIds((current) => {
+      const next = new Set(current);
+      persistedReadKeys.forEach((key) => next.add(key));
+      return next;
+    });
+  }, [persistedReadKeys]);
 
   const notifications = useMemo(
     () => buildNotifications(role, announcementItems),
@@ -139,23 +165,75 @@ export function AppHeader() {
   const visibleNotifications = notifications.filter(
     (notification) => !dismissedIds.includes(notification.id)
   );
+  const isNotificationRead = (notification: NotificationItem) =>
+    notification.isRead === true || readIds.has(notification.id);
   const unreadCount = visibleNotifications.filter(
-    (notification) => !readIds.includes(notification.id)
+    (notification) => !isNotificationRead(notification)
   ).length;
 
-  const markAsRead = (id: string) => {
-    setReadIds((current) => (current.includes(id) ? current : [...current, id]));
+  // Announcement-backed items persist through the same endpoint the Announcements page uses
+  // (announcement_reads) so the two views never disagree about the same announcement; every
+  // other item persists through the generic notification_reads table.
+  const persistRead = (id: string) =>
+    id.startsWith(ANNOUNCEMENT_ID_PREFIX)
+      ? apiRequest<{ message: string }>(`/announcements/${id.slice(ANNOUNCEMENT_ID_PREFIX.length)}/read`, {
+          method: "PUT",
+        })
+      : apiRequest<{ message: string }>(`/notifications/${encodeURIComponent(id)}/read`, { method: "PUT" });
+
+  const markAsRead = async (notification: NotificationItem) => {
+    if (isNotificationRead(notification)) return;
+
+    setReadIds((current) => new Set(current).add(notification.id));
+    try {
+      await persistRead(notification.id);
+      queryClient.invalidateQueries({ queryKey: ANNOUNCEMENTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: NOTIFICATION_READS_QUERY_KEY });
+    } catch {
+      setReadIds((current) => {
+        const next = new Set(current);
+        next.delete(notification.id);
+        return next;
+      });
+      toast.error("Could not save read status");
+    }
   };
 
   const openNotification = (notification: NotificationItem) => {
-    markAsRead(notification.id);
+    markAsRead(notification);
     navigate(notification.path);
   };
 
-  const markAllAsRead = () => {
-    setReadIds((current) =>
-      Array.from(new Set([...current, ...notifications.map((item) => item.id)]))
-    );
+  const markAllAsRead = async () => {
+    const unread = visibleNotifications.filter((item) => !isNotificationRead(item));
+    if (!unread.length) return;
+
+    setReadIds((current) => {
+      const next = new Set(current);
+      unread.forEach((item) => next.add(item.id));
+      return next;
+    });
+
+    const results = await Promise.allSettled(unread.map((item) => persistRead(item.id)));
+    const failedIds = unread
+      .filter((_, index) => results[index].status === "rejected")
+      .map((item) => item.id);
+
+    if (failedIds.length) {
+      setReadIds((current) => {
+        const next = new Set(current);
+        failedIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      toast.error(
+        failedIds.length === unread.length
+          ? "Could not mark notifications as read"
+          : "Some notifications could not be marked as read"
+      );
+    }
+
+    queryClient.invalidateQueries({ queryKey: ANNOUNCEMENTS_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: NOTIFICATION_READS_QUERY_KEY });
   };
 
   const clearNotifications = () => {
@@ -258,7 +336,7 @@ export function AppHeader() {
                 <div className="divide-y divide-border">
                   {visibleNotifications.map((notification) => {
                     const Icon = notification.icon;
-                    const unread = !readIds.includes(notification.id);
+                    const unread = !isNotificationRead(notification);
 
                     return (
                       <button
