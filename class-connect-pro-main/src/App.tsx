@@ -19,6 +19,7 @@ import Login from "./pages/public/Login";
 import Signup from "./pages/public/Signup";
 import ForgotPassword from "./pages/public/ForgotPassword";
 import ResetPassword from "./pages/public/ResetPassword";
+import ConfirmEmailChange from "./pages/public/ConfirmEmailChange";
 import OAuthCallback from "./pages/public/OAuthCallback";
 import FacultyDetail from "./pages/public/FacultyDetail";
 import NotFound from "./pages/public/NotFound";
@@ -82,9 +83,12 @@ const App = () => (
                   <Route path="/login" element={<GuestRoute><Login /></GuestRoute>} />
                   <Route path="/signup" element={<GuestRoute><Signup /></GuestRoute>} />
 
-                  {/* Deliberately not guest-only: a stale session shouldn't block a reset. */}
+                  {/* Deliberately not guest-only: a stale session shouldn't block a reset, and
+                      confirming an email change should work whether or not this browser is
+                      still signed in as the account that requested it. */}
                   <Route path="/forgot-password" element={<ForgotPassword />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route path="/confirm-email" element={<ConfirmEmailChange />} />
                   <Route path="/oauth/callback" element={<OAuthCallback />} />
                   <Route path="/faculty/:facultyId" element={<FacultyDetail />} />
 

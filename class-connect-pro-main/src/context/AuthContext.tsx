@@ -65,6 +65,8 @@ interface AuthContextValue {
   resetPasswordWithToken: (token: string, newPassword: string) => Promise<{ ok: boolean; message?: string }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
   updateProfile: (updates: Partial<AuthUser>) => Promise<boolean>;
+  requestEmailChange: (newEmail: string, currentPassword: string) => Promise<{ ok: boolean; message?: string }>;
+  confirmEmailChange: (token: string) => Promise<{ ok: boolean; message?: string }>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -258,6 +260,39 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Step one: ask for a change. Password-checked server-side; the reply says plainly whether
+  // the link went out, since (unlike a password reset) there's no fallback if it can't be
+  // delivered and the caller is already proven to own the account.
+  const requestEmailChange = async (newEmail: string, currentPassword: string) => {
+    try {
+      const data = await apiRequest<{ message: string }>("/auth/email-change/request", {
+        method: "POST",
+        body: JSON.stringify({ newEmail, currentPassword }),
+      });
+      return { ok: true, message: data.message };
+    } catch (error) {
+      return { ok: false, message: messageOf(error) };
+    }
+  };
+
+  // Step two: redeem the token from the link sent to the NEW address. Not authenticated by a
+  // token in this browser - opening the link is the proof - so a successful confirm returns a
+  // fresh session and this signs the account in immediately with the updated email, even if
+  // the link was opened in a different tab or device than the one that requested the change.
+  const confirmEmailChange = async (token: string) => {
+    try {
+      const data = await apiRequest<AuthResponse>("/auth/email-change/confirm", {
+        method: "POST",
+        body: JSON.stringify({ token }),
+      });
+      const remember = localStorage.getItem(REMEMBER_KEY) !== "false";
+      persistSession(data.user, data.token, remember);
+      return { ok: true, message: "Email updated." };
+    } catch (error) {
+      return { ok: false, message: messageOf(error) };
+    }
+  };
+
   const logout = clearSession;
 
   return (
@@ -274,6 +309,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         resetPasswordWithToken,
         changePassword,
         updateProfile,
+        requestEmailChange,
+        confirmEmailChange,
       }}
     >
       {children}

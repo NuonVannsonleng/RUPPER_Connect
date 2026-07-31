@@ -31,4 +31,13 @@ const passwordResetLimiter = rateLimit({
   message: { message: "Too many password reset requests. Please wait an hour and try again." },
 });
 
-module.exports = { authLimiter, passwordResetLimiter };
+// Same risk profile as a password reset - it emails a link and the request step involves a
+// password guess - so it gets the same limit, shared per IP across both steps.
+const emailChangeLimiter = rateLimit({
+  ...common,
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  message: { message: "Too many email change attempts. Please wait an hour and try again." },
+});
+
+module.exports = { authLimiter, passwordResetLimiter, emailChangeLimiter };

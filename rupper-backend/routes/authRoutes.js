@@ -3,7 +3,7 @@ const auth = require("../middleware/auth");
 const asyncHandler = require("../middleware/asyncHandler");
 const c = require("../controllers/authController");
 const oauth = require("../controllers/oauthController");
-const { authLimiter, passwordResetLimiter } = require("../middleware/rateLimit");
+const { authLimiter, passwordResetLimiter, emailChangeLimiter } = require("../middleware/rateLimit");
 
 router.post("/signup", authLimiter, asyncHandler(c.signup));
 router.post("/login", authLimiter, asyncHandler(c.login));
@@ -19,5 +19,10 @@ router.put("/change-password", auth, asyncHandler(c.changePassword));
 // email and a new password is gone - knowing an address was enough to seize an account.
 router.post("/forgot-password", passwordResetLimiter, asyncHandler(c.forgotPassword));
 router.post("/reset-password", passwordResetLimiter, asyncHandler(c.resetPassword));
+
+// Same two-step shape: request (authenticated, password-checked) mails a link to the NEW
+// address, confirm (not authenticated - the token from that email is the proof) applies it.
+router.post("/email-change/request", auth, emailChangeLimiter, asyncHandler(c.requestEmailChange));
+router.post("/email-change/confirm", emailChangeLimiter, asyncHandler(c.confirmEmailChange));
 
 module.exports = router;

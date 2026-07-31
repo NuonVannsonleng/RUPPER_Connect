@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Laptop, Lock, Moon, Sun, UserRound } from "lucide-react";
+import { Laptop, Lock, Mail, Moon, Sun, UserRound } from "lucide-react";
 import { useTheme } from "next-themes";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { AvatarUpload } from "@/components/shared/AvatarUpload";
@@ -15,7 +15,7 @@ import { toast } from "sonner";
 type ThemeChoice = "light" | "dark" | "system";
 
 export default function Settings() {
-  const { user, updateProfile, changePassword } = useAuth();
+  const { user, updateProfile, changePassword, requestEmailChange } = useAuth();
   const { theme = "system", setTheme } = useTheme();
   const [name, setName] = useState(user?.name ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
@@ -28,8 +28,11 @@ export default function Settings() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [emailChangePassword, setEmailChangePassword] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [isRequestingEmailChange, setIsRequestingEmailChange] = useState(false);
   const activeTheme = theme as ThemeChoice;
 
   if (!user) return null;
@@ -82,6 +85,31 @@ export default function Settings() {
     toast.success("Password changed successfully");
   };
 
+  const handleEmailChangeRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newEmail.trim()) {
+      toast.error("Enter the new email address");
+      return;
+    }
+    if (!emailChangePassword) {
+      toast.error("Enter your current password to confirm this change");
+      return;
+    }
+
+    setIsRequestingEmailChange(true);
+    const result = await requestEmailChange(newEmail.trim(), emailChangePassword);
+    setIsRequestingEmailChange(false);
+
+    if (!result.ok) {
+      toast.error(result.message || "Could not start the email change");
+      return;
+    }
+
+    toast.success(result.message || "Confirmation link sent", { duration: 8000 });
+    setNewEmail("");
+    setEmailChangePassword("");
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
@@ -112,6 +140,7 @@ export default function Settings() {
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
                   <Input id="email" value={user.email} disabled />
+                  <p className="text-xs text-muted-foreground">Use "Change email" to update your sign-in address.</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="role">Role</Label>
@@ -200,6 +229,46 @@ export default function Settings() {
                   <span className="text-xs font-semibold">System</span>
                 </ToggleGroupItem>
               </ToggleGroup>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/60 shadow-soft">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Mail className="h-5 w-5" /> Change email
+              </CardTitle>
+              <CardDescription>
+                We'll send a confirmation link to the new address. Your current email keeps working to sign in until
+                you open it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleEmailChangeRequest} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="newEmail">New email</Label>
+                  <Input
+                    id="newEmail"
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    placeholder="you@rupp.edu.kh"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="emailChangePassword">Current password</Label>
+                  <Input
+                    id="emailChangePassword"
+                    type="password"
+                    value={emailChangePassword}
+                    onChange={(e) => setEmailChangePassword(e.target.value)}
+                    required
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={isRequestingEmailChange}>
+                  {isRequestingEmailChange ? "Sending..." : "Send confirmation link"}
+                </Button>
+              </form>
             </CardContent>
           </Card>
 

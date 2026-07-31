@@ -3,7 +3,12 @@ const jwt = require("jsonwebtoken");
 const pool = require("../config/db");
 const { jwtSecret } = require("../config/secrets");
 const { createResetToken, consumeResetToken } = require("../services/passwordReset");
-const { sendPasswordResetEmail, isMailerConfigured } = require("../services/mailer");
+const { createEmailChangeRequest, consumeEmailChangeRequest } = require("../services/emailChange");
+const { sendPasswordResetEmail, sendEmailChangeVerification, isMailerConfigured } = require("../services/mailer");
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const frontendBaseUrl = () =>
+  (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "http://localhost:8080").split(",")[0].trim();
 
 const publicUser = (u) => ({
   id: u.id,
@@ -124,10 +129,7 @@ exports.forgotPassword = async (req, res) => {
   const created = await createResetToken(email, req.ip);
 
   if (created) {
-    const base = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "http://localhost:8080")
-      .split(",")[0]
-      .trim();
-    const resetUrl = `${base}/reset-password?token=${encodeURIComponent(created.token)}`;
+    const resetUrl = `${frontendBaseUrl()}/reset-password?token=${encodeURIComponent(created.token)}`;
 
     // Deliberately not awaited. Handing the mail off in the background keeps the reply
     // instant; waiting on the SMTP round trip made the form sit on "Sending..." for as long
@@ -164,4 +166,91 @@ exports.resetPassword = async (req, res) => {
   }
 
   res.json({ message: "Password updated. Please sign in with your new password." });
+};
+
+exports.requestEmailChange = async (req, res) => {
+  const { newEmail, currentPassword } = req.body;
+  if (!newEmail || !currentPassword) {
+    return res.status(400).json({ message: "New email and current password are required" });
+  }
+
+  const normalizedEmail = String(newEmail).trim().toLowerCase();
+  if (!EMAIL_PATTERN.test(normalizedEmail)) {
+    return res.status(400).json({ message: "Enter a valid email address" });
+  }
+
+  const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.user.id]);
+  const current = rows[0];
+  if (!current) return res.status(404).json({ message: "User not found" });
+
+  // Re-authenticated here, server-side, against the stored hash. A password only checked in
+  // the browser would let anyone with an open session (or a stolen token, since this app has
+  // no separate step-up auth) change the email without actually knowing it.
+  const passwordOk = await bcrypt.compare(currentPassword, current.password);
+  if (!passwordOk) {
+    return res.status(400).json({ message: "Current password is incorrect" });
+  }
+
+  if (normalizedEmail === current.email) {
+    return res.status(400).json({ message: "That's already your email address" });
+  }
+
+  const [exists] = await pool.query("SELECT id FROM users WHERE email = ? AND id != ?", [normalizedEmail, req.user.id]);
+  if (exists.length) {
+    return res.status(409).json({ message: "That email is already in use on another account" });
+  }
+
+  // Unlike a password reset, there's no admin-assisted fallback for "prove you own this new
+  // inbox" - so if there's no way to actually deliver the link, fail clearly up front instead
+  // of creating a token that can never be redeemed.
+  if (!isMailerConfigured) {
+    return res.status(400).json({
+      message: "Email delivery isn't set up, so email changes can't be verified right now. Ask an administrator for help.",
+    });
+  }
+
+  const created = await createEmailChangeRequest(req.user.id, normalizedEmail, req.ip);
+  const confirmUrl = `${frontendBaseUrl()}/confirm-email?token=${encodeURIComponent(created.token)}`;
+
+  // Awaited (unlike the forgot-password flow, which backgrounds the send) because the caller
+  // is already authenticated as this account - there's no anonymous-probing concern to hide
+  // behind an instant, identical-looking response, and they need to actually know whether the
+  // link went out before they go check an inbox that may never receive anything.
+  try {
+    await sendEmailChangeVerification({
+      to: normalizedEmail,
+      name: current.name,
+      confirmUrl,
+      expiresInMinutes: created.expiresInMinutes,
+    });
+  } catch (error) {
+    return res.status(502).json({ message: `Could not send the confirmation email: ${error.message}` });
+  }
+
+  res.json({
+    message: `Confirmation link sent to ${normalizedEmail}. Your sign-in email stays ${current.email} until you confirm it. The link expires in ${created.expiresInMinutes} minutes.`,
+  });
+};
+
+exports.confirmEmailChange = async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ message: "Confirmation link is required" });
+
+  const result = await consumeEmailChangeRequest(token);
+  if (!result.ok) {
+    // Invalid/expired/used are deliberately worded the same - telling them apart would let
+    // someone probe which tokens once existed. "taken" gets its own message since it's an
+    // outcome the person can act on (pick a different address), not something that reveals
+    // anything about a specific token's history.
+    const message =
+      result.reason === "taken"
+        ? "That email is already in use on another account. Request the change again with a different address."
+        : "This confirmation link is invalid or has expired. Please request a new one.";
+    return res.status(400).json({ message });
+  }
+
+  // No auth middleware on this route - opening the link, which only ever reached the new
+  // inbox, is the proof. Returning a fresh session means confirming signs the account in
+  // immediately with the updated email, even from a brand new tab that never held a token.
+  res.json({ token: makeToken(result.user), user: publicUser(result.user), message: "Email updated." });
 };

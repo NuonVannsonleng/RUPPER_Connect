@@ -20,6 +20,7 @@ const nodemailer = require("nodemailer");
  */
 
 const RESET_SUBJECT = "Reset your RUPPER Connect password";
+const EMAIL_CHANGE_SUBJECT = "Confirm your new RUPPER Connect email";
 
 const brevoKey = (process.env.BREVO_API_KEY || "").trim();
 const resendKey = (process.env.RESEND_API_KEY || "").trim();
@@ -59,7 +60,7 @@ const bareAddress = (value) => {
   return (match ? match[1] : value || "").trim();
 };
 
-const buildBody = ({ name, resetUrl, expiresInMinutes }) => ({
+const buildResetBody = ({ name, resetUrl, expiresInMinutes }) => ({
   text: [
     `Hi ${name || "there"},`,
     "",
@@ -76,6 +77,25 @@ const buildBody = ({ name, resetUrl, expiresInMinutes }) => ({
 <p>If you didn't ask for this, you can ignore this email - your password stays as it is.</p>`,
 });
 
+const buildEmailChangeBody = ({ name, confirmUrl, expiresInMinutes }) => ({
+  text: [
+    `Hi ${name || "there"},`,
+    "",
+    "Someone (hopefully you) asked to make this address the sign-in email for a RUPPER Connect account.",
+    "Confirm the change with the link below:",
+    confirmUrl,
+    "",
+    `The link stops working in ${expiresInMinutes} minutes and can only be used once.`,
+    "If you didn't request this, you can ignore this email - the account keeps its current address.",
+  ].join("\n"),
+  html: `<p>Hi ${name || "there"},</p>
+<p>Someone (hopefully you) asked to make this address the sign-in email for a RUPPER Connect account.</p>
+<p>Confirm the change with the link below:</p>
+<p><a href="${confirmUrl}">Confirm this email address</a></p>
+<p>The link stops working in ${expiresInMinutes} minutes and can only be used once.</p>
+<p>If you didn't request this, you can ignore this email - the account keeps its current address.</p>`,
+});
+
 /** Fetch with a deadline, so a stalled provider can't hold a request open indefinitely. */
 const fetchWithTimeout = async (url, options, ms = 15_000) => {
   const controller = new AbortController();
@@ -87,14 +107,14 @@ const fetchWithTimeout = async (url, options, ms = 15_000) => {
   }
 };
 
-const sendViaBrevo = async ({ to, name, body }) => {
+const sendViaBrevo = async ({ to, name, subject, body }) => {
   const response = await fetchWithTimeout("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: { "api-key": brevoKey, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({
       sender: { email: bareAddress(from), name: fromName },
       to: [{ email: to, name: name || undefined }],
-      subject: RESET_SUBJECT,
+      subject,
       textContent: body.text,
       htmlContent: body.html,
     }),
@@ -108,14 +128,14 @@ const sendViaBrevo = async ({ to, name, body }) => {
   return { delivered: true, messageId: data.messageId };
 };
 
-const sendViaResend = async ({ to, body }) => {
+const sendViaResend = async ({ to, subject, body }) => {
   const response = await fetchWithTimeout("https://api.resend.com/emails", {
     method: "POST",
     headers: { authorization: `Bearer ${resendKey}`, "content-type": "application/json" },
     body: JSON.stringify({
       from: from.includes("<") ? from : `${fromName} <${bareAddress(from)}>`,
       to: [to],
-      subject: RESET_SUBJECT,
+      subject,
       text: body.text,
       html: body.html,
     }),
@@ -129,11 +149,11 @@ const sendViaResend = async ({ to, body }) => {
   return { delivered: true, messageId: data.id };
 };
 
-const sendViaSmtp = async ({ to, body }) => {
+const sendViaSmtp = async ({ to, subject, body }) => {
   const info = await transporter.sendMail({
     from: from.includes("<") ? from : `${fromName} <${bareAddress(from)}>`,
     to,
-    subject: RESET_SUBJECT,
+    subject,
     text: body.text,
     html: body.html,
   });
@@ -145,21 +165,30 @@ const sendViaSmtp = async ({ to, body }) => {
   };
 };
 
-async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinutes }) {
-  const body = buildBody({ name, resetUrl, expiresInMinutes });
-
+/** Shared dispatch behind both mail types - only the subject/body differ per call site. */
+async function sendMail({ to, name, subject, body, logLabel }) {
   if (provider === "none") {
     // Development only. The caller never treats this as delivered.
-    console.log("\n--- password reset (no email provider configured, printing instead) ---");
+    console.log(`\n--- ${logLabel} (no email provider configured, printing instead) ---`);
     console.log(`to: ${to}`);
-    console.log(resetUrl);
+    console.log(body.text);
     console.log("--- end ---\n");
     return { delivered: false, reason: "no-provider" };
   }
 
-  if (provider === "brevo") return sendViaBrevo({ to, name, body });
-  if (provider === "resend") return sendViaResend({ to, body });
-  return sendViaSmtp({ to, body });
+  if (provider === "brevo") return sendViaBrevo({ to, name, subject, body });
+  if (provider === "resend") return sendViaResend({ to, subject, body });
+  return sendViaSmtp({ to, subject, body });
+}
+
+async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinutes }) {
+  const body = buildResetBody({ name, resetUrl, expiresInMinutes });
+  return sendMail({ to, name, subject: RESET_SUBJECT, body, logLabel: "password reset" });
+}
+
+async function sendEmailChangeVerification({ to, name, confirmUrl, expiresInMinutes }) {
+  const body = buildEmailChangeBody({ name, confirmUrl, expiresInMinutes });
+  return sendMail({ to, name, subject: EMAIL_CHANGE_SUBJECT, body, logLabel: "email change verification" });
 }
 
 /** Checks the active provider really works, surfacing the actual error rather than a hang. */
@@ -206,6 +235,7 @@ async function verifyMailer() {
 
 module.exports = {
   sendPasswordResetEmail,
+  sendEmailChangeVerification,
   verifyMailer,
   isMailerConfigured: isConfigured,
   mailerFrom: from,
