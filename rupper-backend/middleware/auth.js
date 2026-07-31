@@ -18,7 +18,7 @@ module.exports = async (req, res, next) => {
   // resetting a compromised account expects. Tokens minted before the last password change
   // are refused. `iat` is in seconds; a second of slack covers rounding.
   try {
-    const [rows] = await pool.query("SELECT password_changed_at, is_active FROM users WHERE id = ?", [payload.id]);
+    const [rows] = await pool.query("SELECT role, password_changed_at, is_active FROM users WHERE id = ?", [payload.id]);
     if (!rows.length) return res.status(401).json({ message: "Account no longer exists" });
 
     // A 7-day token issued before an admin deactivates the account would otherwise keep
@@ -35,6 +35,11 @@ module.exports = async (req, res, next) => {
         return res.status(401).json({ message: "Your password changed. Please sign in again." });
       }
     }
+
+    // The token's role is a snapshot from login time. Without this, a user promoted to
+    // admin keeps failing requireAdmin/requireTeacher checks (403) until their token
+    // expires and they log in again, even though the UI already shows them as admin.
+    payload.role = rows[0].role;
   } catch (error) {
     return next(error);
   }
