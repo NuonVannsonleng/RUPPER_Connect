@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Camera, Laptop, Lock, Moon, Sun, UserRound } from "lucide-react";
+import { Laptop, Lock, Moon, Sun, UserRound } from "lucide-react";
 import { useTheme } from "next-themes";
 import { PageHeader } from "@/components/shared/PageHeader";
+import { AvatarUpload } from "@/components/shared/AvatarUpload";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,22 +33,6 @@ export default function Settings() {
   const activeTheme = theme as ThemeChoice;
 
   if (!user) return null;
-
-  const initials = user.name
-    .split(" ")
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-
-  const handleAvatarUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => setAvatar(String(reader.result));
-    reader.readAsDataURL(file);
-  };
 
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,19 +100,7 @@ export default function Settings() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleProfileSave} className="space-y-5">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                <Avatar className="h-20 w-20">
-                  <AvatarImage src={avatar} alt={name} />
-                  <AvatarFallback className="bg-gradient-primary text-lg font-bold text-primary-foreground">{initials}</AvatarFallback>
-                </Avatar>
-                <div className="space-y-2">
-                  <Label htmlFor="avatar" className="flex items-center gap-2">
-                    <Camera className="h-4 w-4" /> Profile picture
-                  </Label>
-                  <Input id="avatar" type="file" accept="image/*" onChange={handleAvatarUpload} />
-                  <p className="text-xs text-muted-foreground">For testing only. Large images may use more browser storage.</p>
-                </div>
-              </div>
+              <AvatarUpload value={avatar} onChange={setAvatar} name={name || user.name} />
 
               <Separator />
 
