@@ -2,18 +2,37 @@ const pool = require("../config/db");
 
 let schemaReady = false;
 
-const materialTypeToDb = (value = "file") => {
-  const normalized = String(value).toLowerCase();
-  if (normalized === "pdf") return "pdf";
-  if (normalized === "slides") return "slides";
-  if (normalized === "video") return "video";
-  if (normalized === "link") return "link";
-  return "file";
+// "slides" is a legacy value from before Document/Presentation/Spreadsheet existed - old rows
+// keep working, they just render with the Presentation label rather than needing a data migration.
+const MATERIAL_TYPE_ALIASES = {
+  pdf: "pdf",
+  document: "document",
+  doc: "document",
+  presentation: "presentation",
+  slides: "presentation",
+  spreadsheet: "spreadsheet",
+  sheet: "spreadsheet",
+  image: "image",
+  video: "video",
+  link: "link",
+  file: "file",
 };
 
+const materialTypeToDb = (value = "file") => MATERIAL_TYPE_ALIASES[String(value).toLowerCase()] || "file";
+
 const materialTypeToUi = (value = "file") => {
-  const labels = { pdf: "PDF", slides: "Slides", video: "Video", link: "Link", file: "PDF" };
-  return labels[value] || "PDF";
+  const labels = {
+    pdf: "PDF",
+    document: "Document",
+    presentation: "Presentation",
+    slides: "Presentation",
+    spreadsheet: "Spreadsheet",
+    image: "Image",
+    video: "Video",
+    link: "Link",
+    file: "File",
+  };
+  return labels[value] || "File";
 };
 
 const dateOnly = (value) => {
@@ -250,6 +269,17 @@ const ensureAcademicSchemaLocked = async () => {
     await pool.query(`ALTER TABLE course_materials ${clauses}`);
   }
 
+  // course_materials.material_type started as an ENUM with a fixed set of values (pdf, slides,
+  // video, link, file). Document/presentation/spreadsheet/image support needs an open-ended
+  // column instead of another ENUM migration every time a type is added, so widen it once.
+  const [[materialTypeColumn]] = await pool.query(
+    `SELECT COLUMN_TYPE FROM information_schema.columns
+     WHERE table_schema = DATABASE() AND table_name = 'course_materials' AND column_name = 'material_type'`
+  );
+  if (materialTypeColumn && /^enum/i.test(materialTypeColumn.COLUMN_TYPE)) {
+    await pool.query("ALTER TABLE course_materials MODIFY COLUMN material_type VARCHAR(20) NOT NULL DEFAULT 'file'");
+  }
+
   // Same story for assignment_submissions: it originally only had file_url, which never
   // actually got a real file behind it. Give it the same blob columns as course_materials.
   const submissionColumns = {
@@ -442,7 +472,7 @@ exports.getCourses = async (req, res) => {
   if (!ids.length) return res.json([]);
 
   const [materials] = await pool.query(
-    `SELECT m.id, m.course_id, m.title, m.material_type, m.file_url, m.file_name, m.file_size, m.created_at,
+    `SELECT m.id, m.course_id, m.title, m.material_type, m.file_url, m.file_name, m.file_size, m.file_mime, m.created_at,
       creator.name AS createdByName
      FROM course_materials m
      LEFT JOIN users creator ON creator.id = m.created_by
@@ -479,6 +509,7 @@ exports.getCourses = async (req, res) => {
       uploadedAt: shortDate(item.created_at),
       fileName: item.file_name || undefined,
       fileSize: item.file_size || undefined,
+      fileMime: item.file_mime || undefined,
       fileUrl: item.material_type === "link" ? item.file_url || undefined : undefined,
       downloadUrl: item.file_name ? `/academic/materials/${item.id}/download` : undefined,
       createdByName: item.createdByName || undefined,
@@ -592,6 +623,13 @@ const ALLOWED_SUBMISSION_EXTENSIONS = new Set([
   "zip", "rar", "7z", "png", "jpg", "jpeg", "gif",
   "py", "js", "ts", "java", "c", "cpp", "h", "cs", "rb", "go", "php", "html", "css", "json",
 ]);
+// Course materials get a tighter allow-list than submissions - no archives or source code,
+// just the file types a class actually hands out, prioritizing common school formats.
+const ALLOWED_MATERIAL_EXTENSIONS = new Set([
+  "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "csv",
+  "png", "jpg", "jpeg", "gif", "webp",
+  "mp4", "webm", "mov", "m4v",
+]);
 
 exports.createMaterial = async (req, res) => {
   await ensureAcademicSchema();
@@ -601,6 +639,13 @@ exports.createMaterial = async (req, res) => {
 
   let buffer = null;
   if (fileData) {
+    const extension = String(fileName || "").split(".").pop()?.toLowerCase();
+    if (!extension || !ALLOWED_MATERIAL_EXTENSIONS.has(extension)) {
+      return res.status(400).json({
+        message: "That file type isn't allowed. Upload a PDF, Word, PowerPoint, Excel, image, or video file.",
+      });
+    }
+
     buffer = Buffer.from(fileData, "base64");
     if (buffer.length > MAX_MATERIAL_BYTES) {
       return res.status(413).json({ message: "File is too large. Maximum size is 8MB." });

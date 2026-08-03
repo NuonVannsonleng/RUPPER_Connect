@@ -3,6 +3,7 @@ import {
   BookOpenCheck,
   ClipboardCheck,
   Download,
+  Eye,
   FileText,
   Link as LinkIcon,
   Loader2,
@@ -17,6 +18,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/EmptyState";
+import { isPreviewable, MaterialPreviewDialog } from "@/components/shared/MaterialPreviewDialog";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SyncStatus } from "@/components/shared/SyncStatus";
 import {
@@ -39,7 +41,7 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRole } from "@/context/RoleContext";
-import type { AcademicMaterial } from "@/data/academicPlatform";
+import type { AcademicMaterial, MaterialType } from "@/data/academicPlatform";
 import { ACADEMIC_COURSES_QUERY_KEY, useAcademicCourses } from "@/hooks/useAcademicPlatform";
 import { apiRequest, buildApiUrl, getToken } from "@/lib/api";
 
@@ -63,6 +65,22 @@ const statusTone = {
 };
 
 const MAX_MATERIAL_BYTES = 8 * 1024 * 1024;
+
+type UploadableMaterialType = Exclude<MaterialType, "File">;
+
+const MATERIAL_TYPE_OPTIONS: UploadableMaterialType[] = ["PDF", "Document", "Presentation", "Spreadsheet", "Image", "Video", "Link"];
+
+// Narrows the file picker to what each type actually accepts - purely a UX nicety, the
+// backend enforces the real allow-list regardless of what's selected here.
+const MATERIAL_ACCEPT: Record<Exclude<UploadableMaterialType, "Link">, string> = {
+  PDF: ".pdf,application/pdf",
+  Document: ".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  Presentation:
+    ".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  Spreadsheet: ".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  Image: "image/*",
+  Video: "video/*",
+};
 
 const emptyCourseForm = {
   code: "",
@@ -106,10 +124,11 @@ export default function Courses() {
 
   const [materialCourseId, setMaterialCourseId] = useState<string | null>(null);
   const [materialTitle, setMaterialTitle] = useState("");
-  const [materialType, setMaterialType] = useState<"PDF" | "Slides" | "Video" | "Link">("PDF");
+  const [materialType, setMaterialType] = useState<UploadableMaterialType>("PDF");
   const [materialLink, setMaterialLink] = useState("");
   const [materialFile, setMaterialFile] = useState<File | null>(null);
   const [isUploadingMaterial, setIsUploadingMaterial] = useState(false);
+  const [previewMaterial, setPreviewMaterial] = useState<AcademicMaterial | null>(null);
 
   const [enrollments, setEnrollments] = useState<Record<string, EnrolledStudent[]>>({});
   const [loadingEnrollments, setLoadingEnrollments] = useState<Record<string, boolean>>({});
@@ -366,7 +385,7 @@ export default function Courses() {
                       </p>
                     )}
                     {course.materials.map((material) => (
-                      <MaterialRow key={material.id} material={material} />
+                      <MaterialRow key={material.id} material={material} onPreview={setPreviewMaterial} />
                     ))}
                     {isTeacher && (
                       <Button variant="outline" className="w-full" onClick={() => openMaterialDialog(course.id)}>
@@ -615,15 +634,16 @@ export default function Courses() {
             </div>
             <div>
               <Label>Type</Label>
-              <Select value={materialType} onValueChange={(value) => setMaterialType(value as typeof materialType)}>
+              <Select value={materialType} onValueChange={(value) => setMaterialType(value as UploadableMaterialType)}>
                 <SelectTrigger className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PDF">PDF</SelectItem>
-                  <SelectItem value="Slides">Slides</SelectItem>
-                  <SelectItem value="Video">Video</SelectItem>
-                  <SelectItem value="Link">Link</SelectItem>
+                  {MATERIAL_TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -643,6 +663,7 @@ export default function Courses() {
                 <Input
                   id="material-file"
                   type="file"
+                  accept={MATERIAL_ACCEPT[materialType]}
                   onChange={(e) => setMaterialFile(e.target.files?.[0] ?? null)}
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -690,6 +711,8 @@ export default function Courses() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <MaterialPreviewDialog material={previewMaterial} onClose={() => setPreviewMaterial(null)} />
     </>
   );
 }
@@ -760,16 +783,17 @@ async function downloadMaterialFile(material: AcademicMaterial) {
   }
 }
 
-function MaterialRow({ material }: { material: AcademicMaterial }) {
+function MaterialRow({ material, onPreview }: { material: AcademicMaterial; onPreview: (material: AcademicMaterial) => void }) {
   const meta = [material.type, material.uploadedAt, formatBytes(material.fileSize), material.createdByName ? `by ${material.createdByName}` : ""]
     .filter(Boolean)
     .join(" - ");
   const isLink = material.type === "Link" && material.fileUrl;
   const isDownloadable = Boolean(material.downloadUrl);
+  const previewable = isPreviewable(material);
   const Icon = material.type === "Link" ? LinkIcon : FileText;
 
-  const content = (
-    <>
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3">
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
         <Icon className="h-4 w-4" />
       </span>
@@ -777,29 +801,37 @@ function MaterialRow({ material }: { material: AcademicMaterial }) {
         <p className="truncate text-sm font-semibold text-foreground">{material.title}</p>
         <p className="truncate text-xs text-muted-foreground">{meta}</p>
       </div>
-      {(isLink || isDownloadable) && <Download className="h-4 w-4 shrink-0 text-muted-foreground" />}
-    </>
+      <div className="flex shrink-0 items-center gap-1">
+        {isLink && (
+          <Button asChild variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+            <a href={material.fileUrl} target="_blank" rel="noreferrer" aria-label={`Open ${material.title}`}>
+              <LinkIcon className="h-4 w-4" />
+            </a>
+          </Button>
+        )}
+        {previewable && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            onClick={() => onPreview(material)}
+            aria-label={`Preview ${material.title}`}
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+        )}
+        {isDownloadable && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            onClick={() => downloadMaterialFile(material)}
+            aria-label={`Download ${material.title}`}
+          >
+            <Download className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+    </div>
   );
-
-  const className = `flex w-full items-center gap-3 rounded-xl border border-border/60 bg-card p-3 text-left transition-base ${
-    isLink || isDownloadable ? "hover:border-primary/40 hover:bg-secondary/30" : "cursor-default opacity-80"
-  }`;
-
-  if (isLink) {
-    return (
-      <a href={material.fileUrl} target="_blank" rel="noreferrer" className={className}>
-        {content}
-      </a>
-    );
-  }
-
-  if (isDownloadable) {
-    return (
-      <button type="button" onClick={() => downloadMaterialFile(material)} className={className}>
-        {content}
-      </button>
-    );
-  }
-
-  return <div className={className}>{content}</div>;
 }

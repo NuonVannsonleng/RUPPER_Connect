@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS course_materials (
   id INT AUTO_INCREMENT PRIMARY KEY,
   course_id INT NOT NULL,
   title VARCHAR(180) NOT NULL,
-  material_type ENUM('pdf','slides','video','link','file') DEFAULT 'file',
+  material_type VARCHAR(20) NOT NULL DEFAULT 'file',
   file_url TEXT,
   created_by INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

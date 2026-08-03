@@ -3,13 +3,16 @@ export type AssignmentStatus = "submitted" | "pending" | "missing" | "graded" | 
 export type CalendarEventType = "exam" | "assignment" | "holiday" | "event";
 export type PriorityLevel = "normal" | "high" | "urgent";
 
+export type MaterialType = "PDF" | "Document" | "Presentation" | "Spreadsheet" | "Image" | "Video" | "Link" | "File";
+
 export interface AcademicMaterial {
   id: string;
   title: string;
-  type: "PDF" | "Slides" | "Video" | "Link";
+  type: MaterialType;
   uploadedAt: string;
   fileName?: string;
   fileSize?: number;
+  fileMime?: string;
   fileUrl?: string;
   downloadUrl?: string;
   createdByName?: string;
@@ -140,7 +143,7 @@ export const academicCourses: AcademicCourse[] = [
     description: "Relational design, SQL, transactions, indexing, and database-backed application development.",
     materials: [
       { id: "m1", title: "ER Modeling Guide", type: "PDF", uploadedAt: "Jul 01" },
-      { id: "m2", title: "SQL Joins Lab", type: "Slides", uploadedAt: "Jul 04" },
+      { id: "m2", title: "SQL Joins Lab", type: "Presentation", uploadedAt: "Jul 04" },
     ],
     assignments: [
       {
@@ -249,7 +252,7 @@ export const academicCourses: AcademicCourse[] = [
     status: "active",
     description: "Practical AI concepts, model evaluation, responsible AI, and classroom-focused applications.",
     materials: [
-      { id: "m5", title: "Model Evaluation Slides", type: "Slides", uploadedAt: "Jul 03" },
+      { id: "m5", title: "Model Evaluation Slides", type: "Presentation", uploadedAt: "Jul 03" },
       { id: "m6", title: "Responsible AI Case Study", type: "PDF", uploadedAt: "Jul 08" },
     ],
     assignments: [
