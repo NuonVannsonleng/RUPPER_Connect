@@ -96,35 +96,37 @@ export function MaterialPreviewDialog({ material, onClose }: MaterialPreviewDial
 
   return (
     <Dialog open={Boolean(material)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
-          <DialogTitle className="truncate">{material?.title}</DialogTitle>
+      {/* Fills the browser viewport rather than the usual centered card - a comfortable reading
+          size for a full document, but still just a page element (no OS-level Fullscreen API). */}
+      <DialogContent className="left-0 top-0 flex h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:rounded-none">
+        <DialogHeader className="flex-row items-center justify-between border-b border-border px-6 py-4">
+          <DialogTitle className="truncate pr-8">{material?.title}</DialogTitle>
         </DialogHeader>
 
-        <div className="max-h-[70vh] min-h-[300px] overflow-auto rounded-xl border border-border bg-secondary/30">
+        <div className="flex-1 overflow-auto bg-secondary/30">
           {status === "loading" && (
-            <div className="flex h-[300px] items-center justify-center gap-2 text-sm text-muted-foreground">
+            <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading preview...
             </div>
           )}
           {status === "error" && (
-            <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               Could not load a preview for this file.
             </div>
           )}
           {status === "ready" && extension === "pdf" && objectUrl && (
-            <iframe src={objectUrl} title={material?.title} className="h-[70vh] w-full" />
+            <iframe src={objectUrl} title={material?.title} className="h-full w-full" />
           )}
           {status === "ready" && IMAGE_EXTENSIONS.has(extension) && objectUrl && (
-            <img src={objectUrl} alt={material?.title} className="mx-auto max-h-[70vh] w-auto" />
+            <img src={objectUrl} alt={material?.title} className="mx-auto h-full max-w-full object-contain" />
           )}
           {status === "ready" && VIDEO_EXTENSIONS.has(extension) && objectUrl && (
-            <video src={objectUrl} controls className="mx-auto max-h-[70vh] w-full" />
+            <video src={objectUrl} controls className="mx-auto h-full max-w-full" />
           )}
-          <div ref={docxContainerRef} className={isDocx && status === "ready" ? "docx-preview-container bg-white p-4" : "hidden"} />
+          <div ref={docxContainerRef} className={isDocx && status === "ready" ? "docx-preview-container mx-auto max-w-3xl bg-white p-8" : "hidden"} />
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="border-t border-border px-6 py-4">
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
