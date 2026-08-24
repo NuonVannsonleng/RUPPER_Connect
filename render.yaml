@@ -7,7 +7,7 @@
 # (New > Web Service) and type the same values in - see rupper-backend/README.md.
 services:
   - type: web
-    name: rupper-connect-api
+    name: rupper-connect
     runtime: node
     plan: free
     # Match your Supabase project's region so queries don't cross oceans.

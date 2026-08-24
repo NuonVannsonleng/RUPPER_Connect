@@ -34,14 +34,45 @@ app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (req, res) => res.json({ message: "RUPPER Connect API is running" }));
-app.get("/api/health", async (req, res, next) => {
+app.get("/api/health", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT 1 AS ok");
     res.json({ status: "ok", database: rows[0].ok === 1 });
   } catch (error) {
-    next(error);
+    // Deliberately not handed to the error middleware, which hides everything behind a bare
+    // "Server error" in production - that turns a misconfigured DATABASE_URL into a black box
+    // you can only diagnose by reading the host's logs. The code and a short reason are safe
+    // to expose (28P01 = bad password, ENOTFOUND = wrong host); the connection string,
+    // credentials and stack trace are not, and stay out of the response.
+    console.error("Health check failed:", error);
+    res.status(503).json({
+      status: "error",
+      database: false,
+      code: error.code || null,
+      reason: describeDbError(error),
+    });
   }
 });
+
+const describeDbError = (error) => {
+  switch (error.code) {
+    case "28P01":
+      return "Database rejected the password. Check DATABASE_URL, and URL-encode any special characters in it.";
+    case "3D000":
+      return "That database name does not exist on the server.";
+    case "ENOTFOUND":
+      return "Database host not found. On Supabase use the Session pooler URI - the direct db.<ref>.supabase.co host is IPv6-only.";
+    case "ETIMEDOUT":
+    case "ECONNREFUSED":
+      return "Could not reach the database host. Check the host and port in DATABASE_URL.";
+    case "42P01":
+      return "Connected, but the tables are missing. Run database/schema.sql in the Supabase SQL editor.";
+    case "XX000":
+      return "The pooler rejected the connection. Check the username includes your project ref (postgres.<ref>).";
+    default:
+      return "Could not query the database. See the host's logs for the full error.";
+  }
+};
 
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/attendance", require("./routes/attendanceRoutes"));

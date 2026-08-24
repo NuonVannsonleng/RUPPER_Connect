@@ -73,7 +73,7 @@ Environment variables to set on the backend host:
 
 ```env
 DATABASE_URL=postgresql://postgres.xxxx:YourPassword@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
-BACKEND_URL=https://rupper-backend.onrender.com
+BACKEND_URL=https://rupper-connect.onrender.com
 FRONTEND_URLS=https://class-connect-pro-rupp.vercel.app,http://localhost:5173,http://localhost:8080
 JWT_SECRET=change_this_to_a_long_random_secret
 ADMIN_EMAIL=you@example.com
@@ -87,7 +87,7 @@ GOOGLE_OAUTH_CLIENT_SECRET=your_google_client_secret
 After the backend is deployed, set this in Vercel for the frontend:
 
 ```env
-VITE_API_URL=https://rupper-backend.onrender.com/api
+VITE_API_URL=https://rupper-connect.onrender.com/api
 ```
 
 ## Making yourself an admin
@@ -105,7 +105,7 @@ node scripts/makeAdmin.js you@example.com
 Register these in Google Cloud Console:
 
 ```text
-https://rupper-backend.onrender.com/api/auth/oauth/google/callback
+https://rupper-connect.onrender.com/api/auth/oauth/google/callback
 http://localhost:5000/api/auth/oauth/google/callback
 ```
 
