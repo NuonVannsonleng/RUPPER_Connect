@@ -3,17 +3,11 @@ const pool = require("./db");
 
 /**
  * Tracks when each account's password last changed, so sessions opened with the previous
- * one can be refused (see middleware/auth.js). MySQL has no ADD COLUMN IF NOT EXISTS, so
- * check information_schema first.
+ * one can be refused (see middleware/auth.js). Postgres has ADD COLUMN IF NOT EXISTS, so
+ * unlike the MySQL version this needs no information_schema lookup first.
  */
 async function ensurePasswordChangedColumn() {
-  const [rows] = await pool.query(
-    `SELECT COUNT(*) AS total FROM information_schema.columns
-     WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'password_changed_at'`
-  );
-  if (Number(rows[0].total) === 0) {
-    await pool.query("ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL");
-  }
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP NULL");
 }
 
 /**
@@ -21,13 +15,7 @@ async function ensurePasswordChangedColumn() {
  * ensurePasswordChangedColumn, for databases created before this existed.
  */
 async function ensureUserStatusColumn() {
-  const [rows] = await pool.query(
-    `SELECT COUNT(*) AS total FROM information_schema.columns
-     WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'is_active'`
-  );
-  if (Number(rows[0].total) === 0) {
-    await pool.query("ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1");
-  }
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE");
 }
 
 /**

@@ -1,101 +1,125 @@
-# RUPPER Connect Backend (Node.js + Express + MySQL)
+# RUPPER Connect Backend (Node.js + Express + PostgreSQL / Supabase)
 
-## 1. Create MySQL database
-Open MySQL Workbench and run:
+The database is Supabase (managed PostgreSQL). Supabase's free tier has no trial clock on it,
+which is why this moved off Railway MySQL.
 
-```sql
-source database/schema.sql;
+## 1. Create the Supabase project
+
+1. Sign up at <https://supabase.com> with GitHub (free, no card).
+2. **New project** → give it a name, pick a **strong database password** and *write it down*,
+   choose the region closest to you (Singapore / `ap-southeast-1` for Cambodia), then **Create**.
+3. Wait ~2 minutes for it to finish provisioning.
+
+## 2. Create the tables
+
+In the Supabase dashboard open **SQL Editor → New query**, paste the entire contents of
+[`database/schema.sql`](database/schema.sql), and press **Run**. It should say *Success*.
+
+Re-running it later is safe - every statement is `IF NOT EXISTS`.
+
+## 3. Get the connection string
+
+**Connect** (top of the dashboard) → **Session pooler** → copy the URI. It looks like:
+
+```text
+postgresql://postgres.abcdefghijklm:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
 ```
 
-Or copy all SQL from `database/schema.sql` and run it.
+Replace `[YOUR-PASSWORD]` with the password from step 1.
 
-## 2. Configure environment
-Copy `.env.example` to `.env`, then change your MySQL password:
+Two things that trip people up:
+
+- **Use the Session pooler, not the Direct connection.** The direct connection is IPv6-only,
+  and hosts like Render and most home ISPs can't reach it.
+- **URL-encode special characters in the password** - `@` → `%40`, `#` → `%23`, `?` → `%3F`,
+  `/` → `%2F`. Otherwise the URL won't parse. The simplest fix is a password with only
+  letters and digits.
+
+## 4. Configure environment
+
+Copy `.env.example` to `.env` and fill in:
 
 ```env
-DB_USER=root
-DB_PASSWORD=your_mysql_password
-DB_NAME=rupper_connect
+DATABASE_URL=postgresql://postgres.xxxx:YourPassword@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
 JWT_SECRET=change_this_to_any_long_random_text
 BACKEND_URL=http://localhost:5000
 FRONTEND_URLS=http://localhost:5173,http://localhost:8080
 ```
 
-## 3. Install packages
+Generate a real `JWT_SECRET` with:
+
 ```bash
-npm install
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 ```
 
-## 4. Run backend
+## 5. Install and run
+
 ```bash
+npm install
 npm run dev
 ```
 
-API runs at:
+API runs at <http://localhost:5000>. Check <http://localhost:5000/api/health> - it should
+return `{"status":"ok","database":true}`.
 
-```text
-http://localhost:5000
-```
-
-For production hosts such as Render or Railway, use:
+## Deploying (Render)
 
 ```bash
 npm install
 npm start
 ```
 
-Set these environment variables on the backend host:
+Environment variables to set on the backend host:
 
 ```env
-BACKEND_URL=https://class-connect-pro-rupp-production.up.railway.app
+DATABASE_URL=postgresql://postgres.xxxx:YourPassword@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
+BACKEND_URL=https://rupper-backend.onrender.com
 FRONTEND_URLS=https://class-connect-pro-rupp.vercel.app,http://localhost:5173,http://localhost:8080
-DB_HOST=your_hosted_mysql_host
-DB_PORT=3306
-DB_USER=your_hosted_mysql_user
-DB_PASSWORD=your_hosted_mysql_password
-DB_NAME=rupper_connect
-DB_SSL=false
 JWT_SECRET=change_this_to_a_long_random_secret
+ADMIN_EMAIL=you@example.com
 GOOGLE_OAUTH_CLIENT_ID=your_google_client_id
 GOOGLE_OAUTH_CLIENT_SECRET=your_google_client_secret
 ```
 
-If your hosted MySQL provider requires SSL, set `DB_SSL=true`.
+`DB_SSL` no longer needs setting - SSL is on by default because Supabase requires it. Set
+`DB_SSL=false` only when pointing at a plain local Postgres with no TLS.
 
-After the backend is deployed, copy its public URL and add this environment variable in Vercel for the frontend:
+After the backend is deployed, set this in Vercel for the frontend:
 
 ```env
-VITE_API_URL=https://your-backend-url/api
+VITE_API_URL=https://rupper-backend.onrender.com/api
+```
+
+## Making yourself an admin
+
+Signup deliberately never grants the admin role. Either set `ADMIN_EMAIL` (and optionally
+`ADMIN_PASSWORD`) in the host's environment and restart - the account is promoted on boot -
+or run locally:
+
+```bash
+node scripts/makeAdmin.js you@example.com
 ```
 
 ## Google OAuth callback URL
-Register this callback URL in Google Cloud Console:
+
+Register these in Google Cloud Console:
 
 ```text
-https://class-connect-pro-rupp-production.up.railway.app/api/auth/oauth/google/callback
-```
-
-For local development, also register this callback URL:
-
-```text
+https://rupper-backend.onrender.com/api/auth/oauth/google/callback
 http://localhost:5000/api/auth/oauth/google/callback
 ```
 
-## 5. Run frontend
-In the React project folder:
+## Notes on the Postgres port
 
-```bash
-npm install
-npm run dev
-```
-
-Frontend default URL is usually:
-
-```text
-http://localhost:8080
-```
+- Queries throughout the app still use `?` placeholders. `db.js` rewrites them to `$1, $2, ...`
+  and reshapes results so `[rows] = await pool.query(...)`, `result.insertId`, and
+  `result.affectedRows` keep working. See `test/db.test.mjs`.
+- Uploaded files (course materials, assignment submissions) are stored in the database as
+  `BYTEA`. Supabase's free tier gives 500 MB of database storage, so keep an eye on it - if
+  it fills up, move uploads to Supabase Storage instead.
 
 ## Main API routes
+
 - POST `/api/auth/signup`
 - POST `/api/auth/login`
 - GET `/api/auth/oauth/:provider`

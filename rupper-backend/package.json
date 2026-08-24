@@ -1,7 +1,7 @@
 {
   "name": "rupper-backend",
   "version": "1.0.0",
-  "description": "Node.js + Express + MySQL backend for RUPPER Connect",
+  "description": "Node.js + Express + PostgreSQL (Supabase) backend for RUPPER Connect",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -20,8 +20,8 @@
     "express": "^4.21.2",
     "express-rate-limit": "^8.6.1",
     "jsonwebtoken": "^9.0.2",
-    "mysql2": "^3.11.5",
-    "nodemailer": "^9.0.3"
+    "nodemailer": "^9.0.3",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9",

@@ -1,0 +1,44 @@
+# Render deployment for the RUPPER Connect backend.
+#
+# The repo holds the React frontend (class-connect-pro-main, deployed on Vercel) and the
+# Express API (rupper-backend, deployed here), so rootDir points Render at the backend only.
+#
+# You can either let Render read this file (New > Blueprint) or create the service by hand
+# (New > Web Service) and type the same values in - see rupper-backend/README.md.
+services:
+  - type: web
+    name: rupper-connect-api
+    runtime: node
+    plan: free
+    # Match your Supabase project's region so queries don't cross oceans.
+    region: singapore
+    rootDir: rupper-backend
+    buildCommand: npm install
+    startCommand: npm start
+    # Fails the deploy if the database can't be reached, instead of going "live" and then
+    # returning 500 on every request.
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      # Supabase "Session pooler" URI. Set in the Render dashboard, never in this file.
+      - key: DATABASE_URL
+        sync: false
+      # Render generates a strong random value once and keeps it.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_URLS
+        value: https://class-connect-pro-rupp.vercel.app,http://localhost:5173,http://localhost:8080
+      # Optional: only needed if the OAuth redirect URI must differ from this service's own
+      # host. Left unset, the app derives it from the incoming request, which is correct.
+      - key: BACKEND_URL
+        sync: false
+      # The account promoted to admin on boot. Sign up with this email first.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false

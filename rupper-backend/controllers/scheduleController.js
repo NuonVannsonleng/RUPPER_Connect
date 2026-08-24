@@ -17,7 +17,12 @@ const selectScheduleById = async (id) => {
 };
 
 exports.getSchedules = async (req, res) => {
-  const [rows] = await pool.query("SELECT * FROM schedules ORDER BY FIELD(day_of_week,'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'), start_time");
+  const [rows] = await pool.query(
+    `SELECT * FROM schedules
+     ORDER BY CASE day_of_week
+       WHEN 'Monday' THEN 1 WHEN 'Tuesday' THEN 2 WHEN 'Wednesday' THEN 3 WHEN 'Thursday' THEN 4
+       WHEN 'Friday' THEN 5 WHEN 'Saturday' THEN 6 WHEN 'Sunday' THEN 7 ELSE 8 END, start_time`
+  );
   res.json(rows.map(formatSchedule));
 };
 

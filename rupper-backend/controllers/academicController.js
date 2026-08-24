@@ -1,4 +1,10 @@
 const pool = require("../config/db");
+const { withAdvisoryLock, isDuplicateKeyError } = require("../db");
+
+// Arbitrary but fixed keys for pg_advisory_xact_lock - the Postgres replacement for the
+// MySQL named locks this module used to take (GET_LOCK('rupper_academic_schema', ...)).
+const ACADEMIC_SCHEMA_LOCK = 811001;
+const ACADEMIC_SEED_LOCK = 811002;
 
 let schemaReady = false;
 
@@ -37,8 +43,8 @@ const materialTypeToUi = (value = "file") => {
 
 const dateOnly = (value) => {
   if (!value) return "";
-  // mysql2 (with dateStrings: true) returns DATE/DATETIME as raw 'YYYY-MM-DD[ HH:MM:SS]'
-  // strings - take the date portion directly rather than round-tripping through a JS Date,
+  // db.js parses DATE/TIMESTAMP straight through as raw 'YYYY-MM-DD[ HH:MM:SS]' strings -
+  // take the date portion directly rather than round-tripping through a JS Date,
   // which would reinterpret it in the server's local timezone and can shift it by a day.
   const str = String(value);
   const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -71,16 +77,10 @@ const ensureAcademicSchema = async () => {
   if (schemaReady) return;
 
   // Parallel first requests (courses, assignments, quizzes, calendar all fire together on
-  // page load) would otherwise race here too - the ALTER TABLE below isn't safe to run
-  // concurrently like the CREATE TABLE IF NOT EXISTS statements are.
-  const [[lockRow]] = await pool.query("SELECT GET_LOCK('rupper_academic_schema', 15) AS locked");
-  if (!lockRow.locked) return;
-
-  try {
-    await ensureAcademicSchemaLocked();
-  } finally {
-    await pool.query("SELECT RELEASE_LOCK('rupper_academic_schema')");
-  }
+  // page load) would otherwise race here - the ALTER TABLEs below aren't safe to run
+  // concurrently the way CREATE TABLE IF NOT EXISTS is. A Postgres advisory lock serialises
+  // them; see withAdvisoryLock in db.js for why it needs its own connection.
+  await withAdvisoryLock(ACADEMIC_SCHEMA_LOCK, ensureAcademicSchemaLocked);
 };
 
 const ensureAcademicSchemaLocked = async () => {
@@ -88,217 +88,156 @@ const ensureAcademicSchemaLocked = async () => {
 
   const statements = [
     `CREATE TABLE IF NOT EXISTS courses (
-      id INT AUTO_INCREMENT PRIMARY KEY,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       code VARCHAR(30) NOT NULL UNIQUE,
       title VARCHAR(160) NOT NULL,
       faculty VARCHAR(120),
       department VARCHAR(120),
-      lecturer_id INT,
-      credits INT DEFAULT 3,
+      lecturer_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      credits INTEGER DEFAULT 3,
       semester VARCHAR(80),
       room VARCHAR(80),
       schedule_label VARCHAR(120),
       description TEXT,
-      status ENUM('active','completed','archived') DEFAULT 'active',
+      status TEXT DEFAULT 'active' CHECK (status IN ('active','completed','archived')),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (lecturer_id) REFERENCES users(id) ON DELETE SET NULL
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS course_enrollments (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      course_id INT NOT NULL,
-      student_id INT NOT NULL,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       progress DECIMAL(5,2) DEFAULT 0,
       attendance_percentage DECIMAL(5,2) DEFAULT 0,
       current_grade DECIMAL(5,2) DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY unique_course_student (course_id, student_id),
-      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
-      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+      CONSTRAINT unique_course_student UNIQUE (course_id, student_id)
     )`,
     `CREATE TABLE IF NOT EXISTS course_materials (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      course_id INT NOT NULL,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
       title VARCHAR(180) NOT NULL,
-      material_type ENUM('pdf','slides','video','link','file') DEFAULT 'file',
+      material_type VARCHAR(20) NOT NULL DEFAULT 'file',
       file_url TEXT,
-      created_by INT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS course_assignments (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      course_id INT NOT NULL,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
       title VARCHAR(180) NOT NULL,
       description TEXT,
-      deadline DATETIME NOT NULL,
+      deadline TIMESTAMP NOT NULL,
       max_score DECIMAL(6,2) DEFAULT 100,
-      created_by INT,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS assignment_submissions (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      assignment_id INT NOT NULL,
-      student_id INT NOT NULL,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      assignment_id INTEGER NOT NULL REFERENCES course_assignments(id) ON DELETE CASCADE,
+      student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       file_url TEXT,
-      status ENUM('submitted','late','missing','graded') DEFAULT 'submitted',
+      status TEXT DEFAULT 'submitted' CHECK (status IN ('submitted','late','missing','graded')),
       score DECIMAL(6,2),
       feedback TEXT,
-      graded_by INT NULL,
+      graded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       graded_at TIMESTAMP NULL,
-      UNIQUE KEY unique_assignment_submission (assignment_id, student_id),
-      FOREIGN KEY (assignment_id) REFERENCES course_assignments(id) ON DELETE CASCADE,
-      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+      CONSTRAINT unique_assignment_submission UNIQUE (assignment_id, student_id)
     )`,
     `CREATE TABLE IF NOT EXISTS quizzes (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      course_id INT NOT NULL,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
       title VARCHAR(180) NOT NULL,
       description TEXT,
-      time_limit_minutes INT DEFAULT 20,
-      status ENUM('draft','available','closed') DEFAULT 'draft',
-      created_by INT,
+      time_limit_minutes INTEGER DEFAULT 20,
+      status TEXT DEFAULT 'draft' CHECK (status IN ('draft','available','closed')),
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS quiz_questions (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      quiz_id INT NOT NULL,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      quiz_id INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
       question_text TEXT NOT NULL,
-      question_type ENUM('mcq','true_false') NOT NULL,
-      options_json JSON,
+      question_type TEXT NOT NULL CHECK (question_type IN ('mcq','true_false')),
+      options_json JSONB,
       correct_answer VARCHAR(255) NOT NULL,
-      points DECIMAL(5,2) DEFAULT 1,
-      FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+      points DECIMAL(5,2) DEFAULT 1
     )`,
     `CREATE TABLE IF NOT EXISTS quiz_attempts (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      quiz_id INT NOT NULL,
-      student_id INT NOT NULL,
-      answers_json JSON,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      quiz_id INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
+      student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      answers_json JSONB,
       score DECIMAL(6,2),
       started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      submitted_at TIMESTAMP NULL,
-      FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE,
-      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+      submitted_at TIMESTAMP NULL
     )`,
     `CREATE TABLE IF NOT EXISTS academic_calendar_events (
-      id INT AUTO_INCREMENT PRIMARY KEY,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       title VARCHAR(180) NOT NULL,
       event_date DATE NOT NULL,
-      event_type ENUM('exam','assignment','holiday','event') NOT NULL,
-      course_id INT,
-      priority ENUM('normal','high','urgent') DEFAULT 'normal',
-      created_by INT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      event_type TEXT NOT NULL CHECK (event_type IN ('exam','assignment','holiday','event')),
+      course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+      priority TEXT DEFAULT 'normal' CHECK (priority IN ('normal','high','urgent')),
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS transcript_records (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      student_id INT NOT NULL,
-      course_id INT,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
       semester VARCHAR(80) NOT NULL,
-      credits INT NOT NULL,
+      credits INTEGER NOT NULL,
       grade_letter VARCHAR(5) NOT NULL,
       grade_point DECIMAL(3,2) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS messages (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      sender_id INT NOT NULL,
-      receiver_id INT NOT NULL,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       subject VARCHAR(180),
       body TEXT NOT NULL,
       is_read BOOLEAN DEFAULT FALSE,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE TABLE IF NOT EXISTS announcement_reads (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      announcement_id INT NOT NULL,
-      user_id INT NOT NULL,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY unique_announcement_read (announcement_id, user_id),
-      FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      CONSTRAINT unique_announcement_read UNIQUE (announcement_id, user_id)
     )`,
     `CREATE TABLE IF NOT EXISTS attendance_sessions (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      course_id INT,
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
       code VARCHAR(80) NOT NULL UNIQUE,
-      starts_at DATETIME NOT NULL,
-      expires_at DATETIME NOT NULL,
-      created_by INT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      starts_at TIMESTAMP NOT NULL,
+      expires_at TIMESTAMP NOT NULL,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
+    // course_materials and assignment_submissions predate file uploads, so CREATE TABLE
+    // IF NOT EXISTS above won't add the blob columns to a database that already has them.
+    // Postgres has ADD COLUMN IF NOT EXISTS, so this needs no information_schema lookup.
+    `ALTER TABLE course_materials
+       ADD COLUMN IF NOT EXISTS file_name VARCHAR(255),
+       ADD COLUMN IF NOT EXISTS file_mime VARCHAR(150),
+       ADD COLUMN IF NOT EXISTS file_data BYTEA,
+       ADD COLUMN IF NOT EXISTS file_size INTEGER`,
+    `ALTER TABLE assignment_submissions
+       ADD COLUMN IF NOT EXISTS file_name VARCHAR(255),
+       ADD COLUMN IF NOT EXISTS file_mime VARCHAR(150),
+       ADD COLUMN IF NOT EXISTS file_data BYTEA,
+       ADD COLUMN IF NOT EXISTS file_size INTEGER,
+       ADD COLUMN IF NOT EXISTS graded_by INTEGER REFERENCES users(id) ON DELETE SET NULL`,
   ];
 
   for (const statement of statements) {
     await pool.query(statement);
-  }
-
-  // course_materials already existed in production before file uploads were supported, so
-  // CREATE TABLE IF NOT EXISTS above won't add these columns to it - do that separately.
-  // MySQL (unlike MariaDB) has no ADD COLUMN IF NOT EXISTS, so check information_schema first.
-  const materialColumns = {
-    file_name: "VARCHAR(255) NULL",
-    file_mime: "VARCHAR(150) NULL",
-    file_data: "LONGBLOB NULL",
-    file_size: "INT NULL",
-  };
-  const [existingColumns] = await pool.query(
-    "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'course_materials'"
-  );
-  const existingNames = new Set(existingColumns.map((row) => row.COLUMN_NAME));
-  const missing = Object.entries(materialColumns).filter(([name]) => !existingNames.has(name));
-  if (missing.length) {
-    const clauses = missing.map(([name, definition]) => `ADD COLUMN ${name} ${definition}`).join(", ");
-    await pool.query(`ALTER TABLE course_materials ${clauses}`);
-  }
-
-  // course_materials.material_type started as an ENUM with a fixed set of values (pdf, slides,
-  // video, link, file). Document/presentation/spreadsheet/image support needs an open-ended
-  // column instead of another ENUM migration every time a type is added, so widen it once.
-  const [[materialTypeColumn]] = await pool.query(
-    `SELECT COLUMN_TYPE FROM information_schema.columns
-     WHERE table_schema = DATABASE() AND table_name = 'course_materials' AND column_name = 'material_type'`
-  );
-  if (materialTypeColumn && /^enum/i.test(materialTypeColumn.COLUMN_TYPE)) {
-    await pool.query("ALTER TABLE course_materials MODIFY COLUMN material_type VARCHAR(20) NOT NULL DEFAULT 'file'");
-  }
-
-  // Same story for assignment_submissions: it originally only had file_url, which never
-  // actually got a real file behind it. Give it the same blob columns as course_materials.
-  const submissionColumns = {
-    file_name: "VARCHAR(255) NULL",
-    file_mime: "VARCHAR(150) NULL",
-    file_data: "LONGBLOB NULL",
-    file_size: "INT NULL",
-    // Who actually graded it - matters once admin can grade on a teacher's behalf, so the
-    // record reflects the real actor rather than only the course's assigned lecturer.
-    graded_by: "INT NULL",
-  };
-  const [existingSubmissionColumns] = await pool.query(
-    "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'assignment_submissions'"
-  );
-  const existingSubmissionNames = new Set(existingSubmissionColumns.map((row) => row.COLUMN_NAME));
-  const missingSubmissionColumns = Object.entries(submissionColumns).filter(([name]) => !existingSubmissionNames.has(name));
-  if (missingSubmissionColumns.length) {
-    const clauses = missingSubmissionColumns.map(([name, definition]) => `ADD COLUMN ${name} ${definition}`).join(", ");
-    await pool.query(`ALTER TABLE assignment_submissions ${clauses}`);
   }
 
   schemaReady = true;
@@ -322,15 +261,8 @@ const seedAcademicData = async (user) => {
   // Several endpoints call this on first load (courses, assignments, quizzes, calendar, ...),
   // and the frontend fires those requests in parallel. Without a lock, concurrent requests
   // all see an empty table at once and each inserts its own copy of the seed rows, producing
-  // duplicates. A MySQL named lock serializes the check-then-insert so only one request seeds.
-  const [[lockRow]] = await pool.query("SELECT GET_LOCK('rupper_seed_academic', 15) AS locked");
-  if (!lockRow.locked) return;
-
-  try {
-    await seedAcademicDataLocked(user);
-  } finally {
-    await pool.query("SELECT RELEASE_LOCK('rupper_seed_academic')");
-  }
+  // duplicates. The advisory lock serialises the check-then-insert so only one request seeds.
+  await withAdvisoryLock(ACADEMIC_SEED_LOCK, () => seedAcademicDataLocked(user));
 };
 
 const seedAcademicDataLocked = async (user) => {
@@ -348,7 +280,7 @@ const seedAcademicDataLocked = async (user) => {
         `INSERT INTO courses
           (code, title, faculty, department, lecturer_id, credits, semester, room, schedule_label, description)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE title = VALUES(title)`,
+         ON CONFLICT (code) DO UPDATE SET title = EXCLUDED.title`,
         course
       );
     }
@@ -408,8 +340,8 @@ const seedAcademicDataLocked = async (user) => {
       );
       await pool.query(
         `INSERT INTO quiz_questions (quiz_id, question_text, question_type, options_json, correct_answer, points)
-         VALUES (?, ?, 'mcq', JSON_ARRAY('A', 'B', 'C', 'D'), 'A', 1),
-                (?, ?, 'true_false', JSON_ARRAY('True', 'False'), 'True', 1)`,
+         VALUES (?, ?, 'mcq', '["A","B","C","D"]'::jsonb, 'A', 1),
+                (?, ?, 'true_false', '["True","False"]'::jsonb, 'True', 1)`,
         [result.insertId, `${title} sample MCQ`, result.insertId, `${title} sample true or false`]
       );
     }
@@ -436,7 +368,7 @@ const seedAcademicDataLocked = async (user) => {
       await pool.query(
         `INSERT INTO course_enrollments (course_id, student_id, progress, attendance_percentage, current_grade)
          VALUES (?, ?, 72, 94, 86)
-         ON DUPLICATE KEY UPDATE student_id = VALUES(student_id)`,
+         ON CONFLICT (course_id, student_id) DO NOTHING`,
         [course.id, user.id]
       );
     }
@@ -463,7 +395,7 @@ exports.getCourses = async (req, res) => {
   await seedAcademicData(req.user);
 
   const [courses] = await pool.query(
-    `SELECT c.*, u.name AS lecturerName, u.email AS lecturerEmail
+    `SELECT c.*, u.name AS "lecturerName", u.email AS "lecturerEmail"
      FROM courses c
      LEFT JOIN users u ON c.lecturer_id = u.id
      ORDER BY c.code`
@@ -473,29 +405,29 @@ exports.getCourses = async (req, res) => {
 
   const [materials] = await pool.query(
     `SELECT m.id, m.course_id, m.title, m.material_type, m.file_url, m.file_name, m.file_size, m.file_mime, m.created_at,
-      creator.name AS createdByName
+      creator.name AS "createdByName"
      FROM course_materials m
      LEFT JOIN users creator ON creator.id = m.created_by
-     WHERE m.course_id IN (?) ORDER BY m.created_at DESC`,
+     WHERE m.course_id = ANY(?) ORDER BY m.created_at DESC`,
     [ids]
   );
   const [assignments] = await pool.query(
-    `SELECT a.*, creator.name AS createdByName
+    `SELECT a.*, creator.name AS "createdByName"
      FROM course_assignments a
      LEFT JOIN users creator ON creator.id = a.created_by
-     WHERE a.course_id IN (?) ORDER BY a.deadline`,
+     WHERE a.course_id = ANY(?) ORDER BY a.deadline`,
     [ids]
   );
   const [quizzes] = await pool.query(
-    `SELECT q.*, creator.name AS createdByName
+    `SELECT q.*, creator.name AS "createdByName"
      FROM quizzes q
      LEFT JOIN users creator ON creator.id = q.created_by
-     WHERE q.course_id IN (?) ORDER BY q.created_at DESC`,
+     WHERE q.course_id = ANY(?) ORDER BY q.created_at DESC`,
     [ids]
   );
   const [metrics] = await pool.query(
     `SELECT course_id, AVG(progress) AS progress, AVG(attendance_percentage) AS attendance, AVG(current_grade) AS grade
-     FROM course_enrollments WHERE course_id IN (?) GROUP BY course_id`,
+     FROM course_enrollments WHERE course_id = ANY(?) GROUP BY course_id`,
     [ids]
   );
 
@@ -607,7 +539,7 @@ exports.createCourse = async (req, res) => {
       ]
     );
   } catch (error) {
-    if (error.code === "ER_DUP_ENTRY") {
+    if (isDuplicateKeyError(error)) {
       return res.status(409).json({ message: `A course with code "${code.trim().toUpperCase()}" already exists.` });
     }
     throw error;
@@ -691,7 +623,7 @@ exports.getCourseEnrollments = async (req, res) => {
   if (!courseId) return res.status(404).json({ message: "Course not found" });
 
   const [rows] = await pool.query(
-    `SELECT u.id, u.name, u.email, u.student_id AS studentId
+    `SELECT u.id, u.name, u.email, u.student_id AS "studentId"
      FROM course_enrollments ce
      JOIN users u ON u.id = ce.student_id
      WHERE ce.course_id = ?
@@ -715,7 +647,7 @@ exports.enrollStudent = async (req, res) => {
 
   await pool.query(
     `INSERT INTO course_enrollments (course_id, student_id) VALUES (?, ?)
-     ON DUPLICATE KEY UPDATE student_id = VALUES(student_id)`,
+     ON CONFLICT (course_id, student_id) DO NOTHING`,
     [courseId, studentId]
   );
   res.status(201).json({ message: "Student enrolled" });
@@ -738,14 +670,14 @@ exports.getAssignments = async (req, res) => {
   await seedAcademicData(req.user);
 
   const [rows] = await pool.query(
-    `SELECT a.*, c.code AS courseCode, creator.name AS createdByName,
-      COUNT(s.id) AS submissionCount,
-      mine.id AS submissionId,
-      mine.status AS submissionStatus,
+    `SELECT a.*, c.code AS "courseCode", creator.name AS "createdByName",
+      COUNT(s.id) AS "submissionCount",
+      mine.id AS "submissionId",
+      mine.status AS "submissionStatus",
       mine.score,
       mine.feedback,
-      mine.file_name AS fileName,
-      mine.submitted_at AS submittedAt
+      mine.file_name AS "fileName",
+      mine.submitted_at AS "submittedAt"
      FROM course_assignments a
      JOIN courses c ON a.course_id = c.id
      LEFT JOIN users creator ON creator.id = a.created_by
@@ -833,10 +765,10 @@ exports.submitAssignment = async (req, res) => {
   await pool.query(
     `INSERT INTO assignment_submissions (assignment_id, student_id, file_name, file_mime, file_data, file_size, status)
      VALUES (?, ?, ?, ?, ?, ?, 'submitted')
-     ON DUPLICATE KEY UPDATE
-       file_name = VALUES(file_name), file_mime = VALUES(file_mime), file_data = VALUES(file_data),
-       file_size = VALUES(file_size), status = 'submitted', submitted_at = CURRENT_TIMESTAMP,
-       score = NULL, feedback = NULL, graded_at = NULL`,
+     ON CONFLICT (assignment_id, student_id) DO UPDATE SET
+       file_name = EXCLUDED.file_name, file_mime = EXCLUDED.file_mime, file_data = EXCLUDED.file_data,
+       file_size = EXCLUDED.file_size, status = 'submitted', submitted_at = CURRENT_TIMESTAMP,
+       score = NULL, feedback = NULL, graded_at = NULL, graded_by = NULL`,
     [req.params.id, req.user.id, fileName, fileMime || "application/octet-stream", buffer, buffer.length]
   );
 
@@ -846,9 +778,9 @@ exports.submitAssignment = async (req, res) => {
 exports.getAssignmentSubmissions = async (req, res) => {
   await ensureAcademicSchema();
   const [rows] = await pool.query(
-    `SELECT s.id, s.student_id AS studentId, u.name AS studentName, u.email AS studentEmail,
-      s.file_name AS fileName, s.file_size AS fileSize, s.status, s.score, s.feedback, s.submitted_at AS submittedAt,
-      grader.name AS gradedByName
+    `SELECT s.id, s.student_id AS "studentId", u.name AS "studentName", u.email AS "studentEmail",
+      s.file_name AS "fileName", s.file_size AS "fileSize", s.status, s.score, s.feedback, s.submitted_at AS "submittedAt",
+      grader.name AS "gradedByName"
      FROM assignment_submissions s
      JOIN users u ON u.id = s.student_id
      LEFT JOIN users grader ON grader.id = s.graded_by
@@ -915,21 +847,21 @@ exports.getQuizzes = async (req, res) => {
   // that; "mine" additionally pins to a single row via the latest attempt (highest id) so a
   // retake doesn't duplicate the quiz in the list.
   const [rows] = await pool.query(
-    `SELECT q.*, c.code AS courseCode, creator.name AS createdByName,
-      COALESCE(qc.questionCount, 0) AS questionCount,
-      qc.questionTypes,
-      ac.averageScore,
-      mine.score AS myScore
+    `SELECT q.*, c.code AS "courseCode", creator.name AS "createdByName",
+      COALESCE(qc."questionCount", 0) AS "questionCount",
+      qc."questionTypes",
+      ac."averageScore",
+      mine.score AS "myScore"
      FROM quizzes q
      JOIN courses c ON q.course_id = c.id
      LEFT JOIN users creator ON creator.id = q.created_by
      LEFT JOIN (
-       SELECT quiz_id, COUNT(*) AS questionCount, GROUP_CONCAT(DISTINCT question_type) AS questionTypes
+       SELECT quiz_id, COUNT(*) AS "questionCount", string_agg(DISTINCT question_type, ',') AS "questionTypes"
        FROM quiz_questions
        GROUP BY quiz_id
      ) qc ON qc.quiz_id = q.id
      LEFT JOIN (
-       SELECT quiz_id, AVG(score) AS averageScore
+       SELECT quiz_id, AVG(score) AS "averageScore"
        FROM quiz_attempts
        GROUP BY quiz_id
      ) ac ON ac.quiz_id = q.id
@@ -975,8 +907,8 @@ exports.createQuiz = async (req, res) => {
   );
   await pool.query(
     `INSERT INTO quiz_questions (quiz_id, question_text, question_type, options_json, correct_answer, points)
-     VALUES (?, 'Sample MCQ question', 'mcq', JSON_ARRAY('A', 'B', 'C', 'D'), 'A', 1),
-            (?, 'Sample true or false question', 'true_false', JSON_ARRAY('True', 'False'), 'True', 1)`,
+     VALUES (?, 'Sample MCQ question', 'mcq', '["A","B","C","D"]'::jsonb, 'A', 1),
+            (?, 'Sample true or false question', 'true_false', '["True","False"]'::jsonb, 'True', 1)`,
     [result.insertId, result.insertId]
   );
   res.status(201).json({ id: String(result.insertId), message: "Quiz created" });
@@ -1016,7 +948,7 @@ exports.submitQuizAttempt = async (req, res) => {
 exports.getCalendarEvents = async (req, res) => {
   await seedAcademicData(req.user);
   const [rows] = await pool.query(
-    `SELECT e.*, c.code AS courseCode, creator.name AS createdByName
+    `SELECT e.*, c.code AS "courseCode", creator.name AS "createdByName"
      FROM academic_calendar_events e
      LEFT JOIN courses c ON e.course_id = c.id
      LEFT JOIN users creator ON creator.id = e.created_by
@@ -1081,7 +1013,7 @@ exports.getTranscript = async (req, res) => {
   if (!studentId) return res.json([]);
 
   const [rows] = await pool.query(
-    `SELECT tr.*, c.code AS courseCode, c.title AS courseTitle
+    `SELECT tr.*, c.code AS "courseCode", c.title AS "courseTitle"
      FROM transcript_records tr
      LEFT JOIN courses c ON tr.course_id = c.id
      WHERE tr.student_id = ?
@@ -1116,7 +1048,7 @@ exports.getRiskAlerts = async (req, res) => {
   );
 
   const [missingRows] = await pool.query(
-    `SELECT u.id, COUNT(a.id) - COUNT(s.id) AS missingCount
+    `SELECT u.id, COUNT(a.id) - COUNT(s.id) AS "missingCount"
      FROM users u
      CROSS JOIN course_assignments a
      LEFT JOIN assignment_submissions s ON s.assignment_id = a.id AND s.student_id = u.id
@@ -1176,7 +1108,7 @@ exports.getContacts = async (req, res) => {
 exports.getMessages = async (req, res) => {
   await ensureAcademicSchema();
   const [rows] = await pool.query(
-    `SELECT m.*, sender.name AS senderName, sender.role AS senderRole, receiver.name AS receiverName, receiver.role AS receiverRole
+    `SELECT m.*, sender.name AS "senderName", sender.role AS "senderRole", receiver.name AS "receiverName", receiver.role AS "receiverRole"
      FROM messages m
      JOIN users sender ON sender.id = m.sender_id
      JOIN users receiver ON receiver.id = m.receiver_id
@@ -1234,7 +1166,7 @@ exports.createAttendanceSession = async (req, res) => {
 
   const [result] = await pool.query(
     `INSERT INTO attendance_sessions (course_id, code, starts_at, expires_at, created_by)
-     VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? MINUTE), ?)`,
+     VALUES (?, ?, NOW(), NOW() + (?::int * INTERVAL '1 minute'), ?)`,
     [courseId, code, windowMinutes, req.user.id]
   );
 
@@ -1253,8 +1185,8 @@ exports.checkInAttendanceSession = async (req, res) => {
 
   await pool.query(
     `INSERT INTO attendance (student_id, attendance_date, status, created_by)
-     VALUES (?, CURDATE(), 'present', ?)
-     ON DUPLICATE KEY UPDATE status = 'present', created_by = VALUES(created_by)`,
+     VALUES (?, CURRENT_DATE, 'present', ?)
+     ON CONFLICT (student_id, attendance_date) DO UPDATE SET status = 'present', created_by = EXCLUDED.created_by`,
     [req.user.id, session.created_by]
   );
 

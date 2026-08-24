@@ -24,17 +24,15 @@ let tableReady = false;
 const ensureTable = async () => {
   if (tableReady) return;
   await pool.query(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    token_hash CHAR(64) NOT NULL,
-    expires_at DATETIME NOT NULL,
-    used_at DATETIME NULL,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP NULL,
     requested_ip VARCHAR(64),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY unique_token_hash (token_hash),
-    KEY idx_user_active (user_id, used_at),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   )`);
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_reset_user_active ON password_reset_tokens (user_id, used_at)");
   tableReady = true;
 };
 
@@ -63,13 +61,13 @@ async function createResetToken(email, requestedIp) {
   );
   if (active.length >= MAX_ACTIVE_TOKENS) {
     const staleIds = active.slice(MAX_ACTIVE_TOKENS - 1).map((row) => row.id);
-    await pool.query("UPDATE password_reset_tokens SET used_at = NOW() WHERE id IN (?)", [staleIds]);
+    await pool.query("UPDATE password_reset_tokens SET used_at = NOW() WHERE id = ANY(?)", [staleIds]);
   }
 
   const token = crypto.randomBytes(32).toString("base64url");
   await pool.query(
     `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, requested_ip)
-     VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), ?)`,
+     VALUES (?, ?, NOW() + (?::int * INTERVAL '1 minute'), ?)`,
     [user.id, hashToken(token), TOKEN_TTL_MINUTES, requestedIp || null]
   );
 

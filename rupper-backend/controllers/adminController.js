@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const pool = require("../config/db");
+const { isMissingTableError } = require("../db");
 const { verifyMailer, isMailerConfigured, mailerFrom, mailerProvider, sendPasswordResetEmail } = require("../services/mailer");
 const { createResetToken } = require("../services/passwordReset");
 
@@ -34,7 +35,7 @@ const countOf = async (sql, params = []) => {
 // that used to just count role='admin' now needs to count active ones only.
 const countActiveAdmins = async (excludeId) =>
   countOf(
-    `SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND is_active = 1${excludeId ? " AND id != ?" : ""}`,
+    `SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND is_active = TRUE${excludeId ? " AND id != ?" : ""}`,
     excludeId ? [excludeId] : []
   );
 
@@ -44,7 +45,7 @@ const safeCount = async (sql) => {
   try {
     return await countOf(sql);
   } catch (error) {
-    if (error.code === "ER_NO_SUCH_TABLE") return 0;
+    if (isMissingTableError(error)) return 0;
     throw error;
   }
 };
@@ -84,7 +85,9 @@ exports.getUsers = async (req, res) => {
     params.push(role);
   }
   if (search) {
-    where.push("(name LIKE ? OR email LIKE ?)");
+    // ILIKE, not LIKE: MySQL's default collation made LIKE case-insensitive, Postgres' does not,
+    // so a plain LIKE here would silently stop matching "Sophea" when someone types "sophea".
+    where.push("(name ILIKE ? OR email ILIKE ?)");
     params.push(`%${search}%`, `%${search}%`);
   }
 
@@ -92,7 +95,7 @@ exports.getUsers = async (req, res) => {
     `SELECT id, name, email, role, phone, student_id, major, year, department, office, is_active, created_at
      FROM users
      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-     ORDER BY FIELD(role, 'admin', 'teacher', 'student'), name`,
+     ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'teacher' THEN 2 WHEN 'student' THEN 3 ELSE 4 END, name`,
     params
   );
 
@@ -245,7 +248,7 @@ exports.setUserActive = async (req, res) => {
     if (remaining < 1) return res.status(400).json({ message: "Cannot deactivate the last active admin" });
   }
 
-  await pool.query("UPDATE users SET is_active = ? WHERE id = ?", [isActive ? 1 : 0, targetId]);
+  await pool.query("UPDATE users SET is_active = ? WHERE id = ?", [isActive, targetId]);
   const [rows] = await pool.query("SELECT * FROM users WHERE id = ?", [targetId]);
   res.json(publicUser(rows[0]));
 };
@@ -360,8 +363,8 @@ exports.getCourses = async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT c.id, c.code, c.title, c.faculty, c.department, c.semester, c.status,
-              c.credits, c.room, c.schedule_label AS scheduleLabel, c.description,
-              c.lecturer_id AS lecturerId, u.name AS lecturerName,
+              c.credits, c.room, c.schedule_label AS "scheduleLabel", c.description,
+              c.lecturer_id AS "lecturerId", u.name AS "lecturerName",
               (SELECT COUNT(*) FROM course_enrollments e WHERE e.course_id = c.id) AS students
        FROM courses c
        LEFT JOIN users u ON u.id = c.lecturer_id
@@ -386,7 +389,7 @@ exports.getCourses = async (req, res) => {
       }))
     );
   } catch (error) {
-    if (error.code === "ER_NO_SUCH_TABLE") return res.json([]);
+    if (isMissingTableError(error)) return res.json([]);
     throw error;
   }
 };

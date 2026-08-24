@@ -8,12 +8,11 @@ let tableReady = false;
 const ensureTable = async () => {
   if (tableReady) return;
   await pool.query(`CREATE TABLE IF NOT EXISTS notification_reads (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     notification_key VARCHAR(120) NOT NULL,
     read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY unique_notification_read (user_id, notification_key),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    CONSTRAINT unique_notification_read UNIQUE (user_id, notification_key)
   )`);
   tableReady = true;
 };
@@ -29,7 +28,7 @@ exports.markRead = async (req, res) => {
   const key = String(req.params.key || "").trim();
   if (!key) return res.status(400).json({ message: "notification key is required" });
 
-  await pool.query("INSERT IGNORE INTO notification_reads (user_id, notification_key) VALUES (?, ?)", [
+  await pool.query("INSERT INTO notification_reads (user_id, notification_key) VALUES (?, ?) ON CONFLICT (user_id, notification_key) DO NOTHING", [
     req.user.id,
     key,
   ]);
