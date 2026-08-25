@@ -44,10 +44,92 @@ export interface AcademicQuiz {
   questionTypes: Array<"MCQ" | "True/False">;
   questions: number;
   timeLimit: number;
+  /** What this quiz is to the person looking at it - "completed" once they have an attempt. */
   status: "available" | "completed" | "draft";
+  /** The quiz's own state, which a teacher manages independently of anyone's attempt. */
+  publishStatus?: "draft" | "available" | "closed";
   score?: number;
+  /** Total points on offer, which is not the question count once questions are weighted. */
+  maxScore?: number;
+  attemptCount?: number;
   averageScore: number;
   createdByName?: string;
+}
+
+export type QuizQuestionType = "mcq" | "true_false";
+
+export interface QuizQuestion {
+  id: string;
+  question: string;
+  type: QuizQuestionType;
+  options: string[];
+  /** Present for teachers and admins, and for a student only when reviewing a finished attempt. */
+  correctAnswer?: string;
+  points: number;
+}
+
+/** One question as it was answered, snapshotted onto the attempt when it was graded. */
+export interface QuizAnswerDetail {
+  questionId: string;
+  question: string;
+  type: QuizQuestionType;
+  options: string[];
+  chosen: string | null;
+  correctAnswer: string;
+  isCorrect: boolean;
+  points: number;
+  earned: number;
+}
+
+export interface QuizAttemptReview {
+  attemptId: string;
+  score: number;
+  maxScore: number;
+  submittedAt: string | null;
+  detail: QuizAnswerDetail[];
+}
+
+export interface QuizDetail {
+  id: string;
+  courseId: string;
+  courseCode: string;
+  title: string;
+  description: string;
+  timeLimit: number;
+  status: "draft" | "available" | "closed";
+  createdByName?: string;
+  maxScore: number;
+  questions: QuizQuestion[];
+  canEdit: boolean;
+  attempt?: QuizAttemptReview | null;
+}
+
+export interface QuizSubmissionResult {
+  attemptId: string;
+  score: number;
+  maxScore: number;
+  correctCount: number;
+  totalQuestions: number;
+  detail: QuizAnswerDetail[];
+}
+
+export interface QuizResultsAttempt extends QuizAttemptReview {
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+}
+
+export interface QuizResults {
+  quizTitle: string;
+  maxScore: number;
+  questions: QuizQuestion[];
+  attempts: QuizResultsAttempt[];
+  stats: {
+    attemptCount: number;
+    averageScore: number;
+    highestScore: number;
+    lowestScore: number;
+  };
 }
 
 export interface AcademicCourse {

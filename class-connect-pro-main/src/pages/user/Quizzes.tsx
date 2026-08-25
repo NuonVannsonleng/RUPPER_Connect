@@ -1,33 +1,59 @@
 import { useState } from "react";
-import { Brain, CheckCircle2, Clock3, HelpCircle, ListChecks, Loader2, Plus, Trophy } from "lucide-react";
+import {
+  BarChart3,
+  Brain,
+  CheckCircle2,
+  Clock3,
+  Eye,
+  HelpCircle,
+  ListChecks,
+  Loader2,
+  Pencil,
+  Play,
+  Plus,
+  Trash2,
+  Trophy,
+} from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { QuizBuilderDialog } from "@/components/quiz/QuizBuilderDialog";
+import { QuizPlayerDialog } from "@/components/quiz/QuizPlayerDialog";
+import { QuizResultsDialog } from "@/components/quiz/QuizResultsDialog";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { SyncStatus } from "@/components/shared/SyncStatus";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { useRole } from "@/context/RoleContext";
 import type { AcademicQuiz } from "@/data/academicPlatform";
 import {
   ACADEMIC_QUIZZES_QUERY_KEY,
   useAcademicCourses,
   useAcademicQuizzes,
+  useQuizDetail,
+  useQuizResults,
 } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
-const statusTone = {
+const statusTone: Record<string, string> = {
   available: "bg-success/10 text-success border-success/20",
   completed: "bg-primary/10 text-primary border-primary/20",
   draft: "bg-muted text-muted-foreground border-border",
+  closed: "bg-warning/10 text-warning border-warning/20",
 };
 
 export default function Quizzes() {
@@ -35,84 +61,60 @@ export default function Quizzes() {
   const queryClient = useQueryClient();
   const { data: quizzes = [], isFetching, dataUpdatedAt } = useAcademicQuizzes();
   const { data: courses = [] } = useAcademicCourses();
-  const [viewingQuiz, setViewingQuiz] = useState<AcademicQuiz | null>(null);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [newQuiz, setNewQuiz] = useState({ courseId: "", title: "", description: "", timeLimit: "20", status: "available" });
-  const [isCreatingQuiz, setIsCreatingQuiz] = useState(false);
-  const [submittingQuizId, setSubmittingQuizId] = useState<string | null>(null);
+
+  // Only one of these is ever set: whichever dialog is open drives its own detail fetch.
+  const [builderQuizId, setBuilderQuizId] = useState<string | null>(null);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [playerQuizId, setPlayerQuizId] = useState<string | null>(null);
+  const [resultsQuizId, setResultsQuizId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AcademicQuiz | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const { data: builderDetail, isFetching: builderLoading } = useQuizDetail(builderOpen ? builderQuizId : null);
+  const { data: playerDetail, isFetching: playerLoading } = useQuizDetail(playerQuizId);
+  const { data: results, isFetching: resultsLoading } = useQuizResults(resultsQuizId);
+
   const isTeacher = canTeach;
-  // The list starts out showing hardcoded placeholder data (ids like "q1") while the real
-  // request is in flight - dataUpdatedAt stays 0 until that first real response lands
-  // (see initialDataUpdatedAt: 0 in App.tsx). Acting on the placeholder rows crashes the
-  // submit endpoint, so quiz actions stay disabled until this flips true.
+  // The list renders placeholder demo rows (ids like "q1") until the first real response lands;
+  // acting on those hits the API with a non-numeric id, so actions stay disabled until then.
   const quizzesLoaded = dataUpdatedAt > 0;
+  const isRealQuiz = (quiz: AcademicQuiz) => quizzesLoaded && /^\d+$/.test(quiz.id);
+
   const available = quizzes.filter((quiz) => quiz.status === "available").length;
   const completed = quizzes.filter((quiz) => quiz.status === "completed").length;
   const questionTotal = quizzes.reduce((total, quiz) => total + quiz.questions, 0);
 
   const refreshQuizzes = () => queryClient.invalidateQueries({ queryKey: ACADEMIC_QUIZZES_QUERY_KEY });
 
-  const openCreateDialog = () => {
-    if (!courses.length) {
+  const openBuilder = (quizId: string | null) => {
+    if (quizId === null && !courses.length) {
       toast.error("Create a course first.");
       return;
     }
-    setNewQuiz({ courseId: courses[0].id, title: "", description: "", timeLimit: "20", status: "available" });
-    setCreateDialogOpen(true);
+    setBuilderQuizId(quizId);
+    setBuilderOpen(true);
   };
 
-  const createQuiz = async () => {
-    if (!newQuiz.courseId || !newQuiz.title.trim()) {
-      toast.error("Course and title are required.");
-      return;
-    }
-
-    setIsCreatingQuiz(true);
-    try {
-      await apiRequest<{ message: string }>("/academic/quizzes", {
-        method: "POST",
-        body: JSON.stringify({
-          courseId: newQuiz.courseId,
-          title: newQuiz.title.trim(),
-          description: newQuiz.description.trim(),
-          timeLimit: Number(newQuiz.timeLimit) || 20,
-          status: newQuiz.status,
-        }),
-      });
-      await refreshQuizzes();
-      toast.success("Quiz created");
-      setCreateDialogOpen(false);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not create quiz");
-    } finally {
-      setIsCreatingQuiz(false);
-    }
-  };
-
-  const submitQuiz = async (quizId: string) => {
-    if (!quizzesLoaded) {
-      toast.error("Quizzes are still loading. Try again in a moment.");
-      return;
-    }
-    if (!/^\d+$/.test(quizId)) {
-      // Placeholder rows use non-numeric ids ("q1") and shouldn't be actionable even if a
-      // click somehow lands before quizzesLoaded flips true.
+  const guardAction = (quiz: AcademicQuiz, action: () => void) => {
+    if (!isRealQuiz(quiz)) {
       toast.error("This quiz hasn't loaded yet. Try again in a moment.");
       return;
     }
+    action();
+  };
 
-    setSubmittingQuizId(quizId);
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setIsDeleting(true);
     try {
-      await apiRequest<{ message: string }>(`/academic/quizzes/${quizId}/attempts`, {
-        method: "POST",
-        body: JSON.stringify({ answers: { sample: "A" } }),
-      });
+      await apiRequest(`/academic/quizzes/${pendingDelete.id}`, { method: "DELETE" });
       await refreshQuizzes();
-      toast.success("Quiz attempt submitted");
+      toast.success("Quiz deleted");
+      setPendingDelete(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not submit quiz");
+      toast.error(error instanceof Error ? error.message : "Could not delete the quiz");
     } finally {
-      setSubmittingQuizId(null);
+      setIsDeleting(false);
     }
   };
 
@@ -123,12 +125,12 @@ export default function Quizzes() {
         title={isTeacher ? "Quiz and exam builder" : "Quizzes and exams"}
         description={
           isTeacher
-            ? "Create MCQ and true/false quizzes, set time limits, and use auto grading for faster feedback."
-            : "Take available quizzes, watch the time limit, and review your results after submission."
+            ? "Write multiple-choice and true/false questions, mark the answer key, and let submissions grade themselves."
+            : "Take available quizzes, watch the time limit, and review your answers straight after submitting."
         }
         actions={
           isTeacher ? (
-            <Button size="sm" variant="secondary" className="font-semibold" onClick={openCreateDialog}>
+            <Button size="sm" variant="secondary" className="font-semibold" onClick={() => openBuilder(null)}>
               <Plus className="mr-2 h-4 w-4" />
               New quiz
             </Button>
@@ -146,183 +148,173 @@ export default function Quizzes() {
       </div>
 
       {quizzes.length === 0 && !isFetching && (
-        <EmptyState icon={Brain} title="No quizzes yet" detail="Quizzes and exams will appear here once created." />
+        <EmptyState
+          icon={Brain}
+          title="No quizzes yet"
+          detail={isTeacher ? "Create one to get started." : "Quizzes will appear here once your teacher publishes them."}
+        />
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        {quizzes.map((quiz) => (
-          <Card
-            key={quiz.id}
-            className="flex min-h-[320px] flex-col border-border/60 p-5 shadow-soft transition-base hover:-translate-y-0.5 hover:shadow-elegant"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <Badge variant="outline">{quiz.courseCode}</Badge>
-                <h2 className="mt-3 font-display text-xl font-bold text-foreground">{quiz.title}</h2>
-                {quiz.createdByName && (
-                  <p className="mt-1 text-xs text-muted-foreground">Created by {quiz.createdByName}</p>
+        {quizzes.map((quiz, index) => {
+          const badgeStatus = isTeacher ? quiz.publishStatus ?? quiz.status : quiz.status;
+          const outOf = quiz.maxScore || quiz.questions;
+          return (
+            <Card
+              key={quiz.id}
+              style={{ animationDelay: `${Math.min(index, 9) * 45}ms` }}
+              className="flex min-h-[320px] animate-fade-in flex-col border-border/60 p-5 shadow-soft transition-base hover:-translate-y-0.5 hover:shadow-elegant"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <Badge variant="outline">{quiz.courseCode}</Badge>
+                  <h2 className="mt-3 font-display text-xl font-bold text-foreground">{quiz.title}</h2>
+                  {quiz.createdByName && (
+                    <p className="mt-1 text-xs text-muted-foreground">Created by {quiz.createdByName}</p>
+                  )}
+                </div>
+                <Badge className={cn("border shrink-0", statusTone[badgeStatus] ?? statusTone.draft)}>
+                  {badgeStatus}
+                </Badge>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <MiniPanel icon={HelpCircle} label="Questions" value={quiz.questions} />
+                <MiniPanel icon={Clock3} label="Time" value={`${quiz.timeLimit} min`} />
+                {isTeacher ? (
+                  <>
+                    <MiniPanel icon={Trophy} label="Average" value={quiz.attemptCount ? `${quiz.averageScore}/${outOf}` : "-"} />
+                    <MiniPanel icon={BarChart3} label="Attempts" value={quiz.attemptCount ?? 0} />
+                  </>
+                ) : (
+                  <>
+                    <MiniPanel icon={Trophy} label="Average" value={quiz.averageScore ? `${quiz.averageScore}/${outOf}` : "-"} />
+                    <MiniPanel
+                      icon={CheckCircle2}
+                      label="Your score"
+                      value={quiz.score === undefined ? "Not taken" : `${quiz.score}/${outOf}`}
+                    />
+                  </>
                 )}
               </div>
-              <Badge className={`border ${statusTone[quiz.status]}`}>{quiz.status}</Badge>
-            </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <MiniPanel icon={HelpCircle} label="Questions" value={quiz.questions} />
-              <MiniPanel icon={Clock3} label="Time" value={`${quiz.timeLimit} min`} />
-              <MiniPanel icon={Trophy} label="Average" value={quiz.averageScore ? `${quiz.averageScore}/${quiz.questions}` : "Draft"} />
-              <MiniPanel icon={CheckCircle2} label="Your score" value={quiz.score ? `${quiz.score}/${quiz.questions}` : "Not taken"} />
-            </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {quiz.questionTypes.map((type) => (
+                  <Badge key={type} variant="secondary">
+                    {type}
+                  </Badge>
+                ))}
+              </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              {quiz.questionTypes.map((type) => (
-                <Badge key={type} variant="secondary">
-                  {type}
-                </Badge>
-              ))}
-            </div>
-
-            <Button
-              className="mt-auto w-full bg-gradient-primary text-primary-foreground"
-              onClick={() => (isTeacher ? setViewingQuiz(quiz) : submitQuiz(quiz.id))}
-              disabled={!isTeacher && (!quizzesLoaded || submittingQuizId === quiz.id)}
-            >
-              {!isTeacher && !quizzesLoaded ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
-                </>
-              ) : !isTeacher && submittingQuizId === quiz.id ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...
-                </>
-              ) : isTeacher ? (
-                "View results"
-              ) : quiz.status === "completed" ? (
-                "View results"
-              ) : (
-                "Take quiz"
-              )}
-            </Button>
-          </Card>
-        ))}
+              <div className="mt-auto pt-4">
+                {isTeacher ? (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      className="flex-1"
+                      onClick={() => guardAction(quiz, () => openBuilder(quiz.id))}
+                    >
+                      <Pencil className="mr-2 h-4 w-4" /> Edit
+                    </Button>
+                    <Button
+                      className="flex-1 bg-gradient-primary text-primary-foreground"
+                      onClick={() => guardAction(quiz, () => setResultsQuizId(quiz.id))}
+                    >
+                      <BarChart3 className="mr-2 h-4 w-4" /> Results
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Delete quiz"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => guardAction(quiz, () => setPendingDelete(quiz))}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    className="w-full bg-gradient-primary text-primary-foreground"
+                    disabled={!quizzesLoaded || (quiz.status === "draft" && !quiz.score)}
+                    onClick={() => guardAction(quiz, () => setPlayerQuizId(quiz.id))}
+                  >
+                    {!quizzesLoaded ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
+                      </>
+                    ) : quiz.status === "completed" ? (
+                      <>
+                        <Eye className="mr-2 h-4 w-4" /> Review answers
+                      </>
+                    ) : quiz.status === "draft" ? (
+                      "Not open yet"
+                    ) : (
+                      <>
+                        <Play className="mr-2 h-4 w-4" /> Take quiz
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            </Card>
+          );
+        })}
       </div>
 
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create quiz</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 pt-2">
-            <div>
-              <Label>Course</Label>
-              <Select value={newQuiz.courseId} onValueChange={(value) => setNewQuiz((f) => ({ ...f, courseId: value }))}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Choose a course" />
-                </SelectTrigger>
-                <SelectContent>
-                  {courses.map((course) => (
-                    <SelectItem key={course.id} value={course.id}>
-                      {course.code} - {course.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="quiz-title">Title</Label>
-              <Input
-                id="quiz-title"
-                value={newQuiz.title}
-                onChange={(e) => setNewQuiz((f) => ({ ...f, title: e.target.value }))}
-                placeholder="Chapter 4 Check"
-              />
-            </div>
-            <div>
-              <Label htmlFor="quiz-description">Description</Label>
-              <Textarea
-                id="quiz-description"
-                value={newQuiz.description}
-                onChange={(e) => setNewQuiz((f) => ({ ...f, description: e.target.value }))}
-                placeholder="What does this quiz cover?"
-                className="min-h-[5rem]"
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="quiz-time-limit">Time limit (minutes)</Label>
-                <Input
-                  id="quiz-time-limit"
-                  type="number"
-                  min={1}
-                  value={newQuiz.timeLimit}
-                  onChange={(e) => setNewQuiz((f) => ({ ...f, timeLimit: e.target.value }))}
-                />
-              </div>
-              <div>
-                <Label>Status</Label>
-                <Select value={newQuiz.status} onValueChange={(value) => setNewQuiz((f) => ({ ...f, status: value }))}>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="available">Available</SelectItem>
-                    <SelectItem value="draft">Draft</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              A sample MCQ and true/false question are added automatically - editing question sets isn't available
-              from the dashboard yet.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCreateDialogOpen(false)} disabled={isCreatingQuiz}>
-              Cancel
-            </Button>
-            <Button onClick={createQuiz} className="bg-gradient-primary text-primary-foreground" disabled={isCreatingQuiz}>
-              {isCreatingQuiz ? "Creating..." : "Create quiz"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <QuizBuilderDialog
+        open={builderOpen}
+        onOpenChange={(open) => {
+          setBuilderOpen(open);
+          if (!open) setBuilderQuizId(null);
+        }}
+        detail={builderQuizId ? builderDetail ?? null : null}
+        isLoadingDetail={Boolean(builderQuizId) && builderLoading && !builderDetail}
+        courses={courses}
+        onSaved={refreshQuizzes}
+      />
 
-      <Dialog open={Boolean(viewingQuiz)} onOpenChange={(open) => !open && setViewingQuiz(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{viewingQuiz?.title}</DialogTitle>
-          </DialogHeader>
-          {viewingQuiz && (
-            <div className="space-y-3 pt-2 text-sm">
-              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
-                <span className="text-muted-foreground">Course</span>
-                <span className="font-semibold text-foreground">{viewingQuiz.courseCode}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
-                <span className="text-muted-foreground">Status</span>
-                <Badge className={`border ${statusTone[viewingQuiz.status]}`}>{viewingQuiz.status}</Badge>
-              </div>
-              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
-                <span className="text-muted-foreground">Questions</span>
-                <span className="font-semibold text-foreground">{viewingQuiz.questions}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
-                <span className="text-muted-foreground">Time limit</span>
-                <span className="font-semibold text-foreground">{viewingQuiz.timeLimit} min</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg bg-secondary/40 px-4 py-2">
-                <span className="text-muted-foreground">Class average</span>
-                <span className="font-semibold text-foreground">
-                  {viewingQuiz.averageScore ? `${viewingQuiz.averageScore}/${viewingQuiz.questions}` : "No attempts yet"}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Editing quiz questions from the dashboard isn't available yet - question sets can be updated directly
-                on the backend for now.
-              </p>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <QuizPlayerDialog
+        open={Boolean(playerQuizId)}
+        onOpenChange={(open) => !open && setPlayerQuizId(null)}
+        detail={playerDetail ?? null}
+        isLoadingDetail={playerLoading && !playerDetail}
+        onSubmitted={refreshQuizzes}
+      />
+
+      <QuizResultsDialog
+        open={Boolean(resultsQuizId)}
+        onOpenChange={(open) => !open && setResultsQuizId(null)}
+        results={results ?? null}
+        isLoading={resultsLoading && !results}
+      />
+
+      <AlertDialog open={Boolean(pendingDelete)} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete "{pendingDelete?.title}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the quiz, its questions, and
+              {pendingDelete?.attemptCount
+                ? ` all ${pendingDelete.attemptCount} student ${pendingDelete.attemptCount === 1 ? "attempt" : "attempts"}`
+                : " any attempts"}
+              . It can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDelete();
+              }}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "Deleting..." : "Delete quiz"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

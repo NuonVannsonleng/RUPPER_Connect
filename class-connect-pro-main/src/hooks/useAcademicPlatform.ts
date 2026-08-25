@@ -12,6 +12,8 @@ import {
   type AcademicCalendarEvent,
   type AcademicCourse,
   type AcademicQuiz,
+  type QuizDetail,
+  type QuizResults,
   type MessageThread,
   type StudentAlert,
   type TranscriptRecord,
@@ -84,6 +86,31 @@ export function useAcademicQuizzes() {
     queryKey: ACADEMIC_QUIZZES_QUERY_KEY,
     queryFn: fetchAcademicQuizzes,
     initialData: academicQuizzes,
+  });
+}
+
+/**
+ * A single quiz with its questions. No demo fallback and no cache reuse: the answer key is only
+ * present for teachers, and a student's copy is stripped server-side, so a stale entry handed to
+ * the wrong role would be both wrong and a leak. `enabled` keeps it idle until a dialog opens.
+ */
+export function useQuizDetail(quizId: string | null) {
+  return useQuery({
+    queryKey: ["academic", "quiz", quizId] as const,
+    queryFn: () => apiRequest<QuizDetail>(`/academic/quizzes/${quizId}`),
+    enabled: Boolean(quizId),
+    gcTime: 0,
+    staleTime: 0,
+  });
+}
+
+export function useQuizResults(quizId: string | null) {
+  return useQuery({
+    queryKey: ["academic", "quiz-results", quizId] as const,
+    queryFn: () => apiRequest<QuizResults>(`/academic/quizzes/${quizId}/results`),
+    enabled: Boolean(quizId),
+    gcTime: 0,
+    staleTime: 0,
   });
 }
 
