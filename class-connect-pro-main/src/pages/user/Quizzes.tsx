@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BarChart3,
   Brain,
+  CalendarClock,
   CheckCircle2,
   Clock3,
   Eye,
@@ -38,7 +39,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useRole } from "@/context/RoleContext";
-import type { AcademicQuiz } from "@/data/academicPlatform";
+import type { AcademicQuiz, QuizAvailability } from "@/data/academicPlatform";
 import {
   ACADEMIC_QUIZZES_QUERY_KEY,
   useAcademicCourses,
@@ -47,6 +48,7 @@ import {
   useQuizResults,
 } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
+import { availabilityAt, formatDistance, formatMoment } from "@/lib/quizSchedule";
 import { cn } from "@/lib/utils";
 
 const statusTone: Record<string, string> = {
@@ -54,7 +56,22 @@ const statusTone: Record<string, string> = {
   completed: "bg-primary/10 text-primary border-primary/20",
   draft: "bg-muted text-muted-foreground border-border",
   closed: "bg-warning/10 text-warning border-warning/20",
+  scheduled: "bg-info/10 text-info border-info/20",
 };
+
+/**
+ * Ticks once a second while any quiz is waiting on its schedule, so a card can cross its
+ * opening time and become takeable on its own. Idle - and re-rendering nothing - otherwise.
+ */
+function useClock(active: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
+}
 
 export default function Quizzes() {
   const { canTeach } = useRole();
@@ -79,6 +96,10 @@ export default function Quizzes() {
   // acting on those hits the API with a non-numeric id, so actions stay disabled until then.
   const quizzesLoaded = dataUpdatedAt > 0;
   const isRealQuiz = (quiz: AcademicQuiz) => quizzesLoaded && /^\d+$/.test(quiz.id);
+
+  // Only run a clock if something is actually waiting on one.
+  const hasSchedule = quizzes.some((quiz) => quiz.opensAt || quiz.closesAt);
+  const now = useClock(hasSchedule);
 
   const available = quizzes.filter((quiz) => quiz.status === "available").length;
   const completed = quizzes.filter((quiz) => quiz.status === "completed").length;
@@ -157,8 +178,13 @@ export default function Quizzes() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         {quizzes.map((quiz, index) => {
-          const badgeStatus = isTeacher ? quiz.publishStatus ?? quiz.status : quiz.status;
+          // Recomputed against the ticking clock rather than trusting the value fetched
+          // earlier, so a quiz whose opening time passes while this page is open unlocks itself.
+          const live = availabilityAt(quiz.publishStatus, quiz.opensAt, quiz.closesAt, now);
+          const takeable = live === "available";
+          const badgeStatus = isTeacher ? live : quiz.status === "completed" ? "completed" : live;
           const outOf = quiz.maxScore || quiz.questions;
+          const hasAttempt = quiz.score !== undefined;
           return (
             <Card
               key={quiz.id}
@@ -206,6 +232,8 @@ export default function Quizzes() {
                 ))}
               </div>
 
+              <ScheduleLine quiz={quiz} live={live} now={now} />
+
               <div className="mt-auto pt-4">
                 {isTeacher ? (
                   <div className="flex gap-2">
@@ -235,18 +263,25 @@ export default function Quizzes() {
                 ) : (
                   <Button
                     className="w-full bg-gradient-primary text-primary-foreground"
-                    disabled={!quizzesLoaded || (quiz.status === "draft" && !quiz.score)}
+                    // A finished attempt stays reviewable however the schedule has moved on.
+                    disabled={!quizzesLoaded || (!takeable && !hasAttempt)}
                     onClick={() => guardAction(quiz, () => setPlayerQuizId(quiz.id))}
                   >
                     {!quizzesLoaded ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
                       </>
-                    ) : quiz.status === "completed" ? (
+                    ) : hasAttempt ? (
                       <>
                         <Eye className="mr-2 h-4 w-4" /> Review answers
                       </>
-                    ) : quiz.status === "draft" ? (
+                    ) : live === "scheduled" ? (
+                      <>
+                        <CalendarClock className="mr-2 h-4 w-4" /> Opens in {formatDistance(Date.parse(quiz.opensAt!) - now)}
+                      </>
+                    ) : live === "closed" ? (
+                      "Closed"
+                    ) : live === "draft" ? (
                       "Not open yet"
                     ) : (
                       <>
@@ -316,6 +351,34 @@ export default function Quizzes() {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/** The one-line summary of where a quiz sits in its window, or nothing if it has none. */
+function ScheduleLine({ quiz, live, now }: { quiz: AcademicQuiz; live: QuizAvailability; now: number }) {
+  if (!quiz.opensAt && !quiz.closesAt) return null;
+
+  const opensIn = quiz.opensAt ? Date.parse(quiz.opensAt) - now : null;
+  const closesIn = quiz.closesAt ? Date.parse(quiz.closesAt) - now : null;
+
+  const [text, tone] =
+    live === "scheduled" && opensIn !== null
+      ? [`Opens in ${formatDistance(opensIn)} - ${formatMoment(quiz.opensAt)}`, "text-info"]
+      : live === "closed" && closesIn !== null && closesIn <= 0
+        ? [`Closed ${formatMoment(quiz.closesAt)}`, "text-muted-foreground"]
+        : closesIn !== null && closesIn > 0
+          ? [`Closes in ${formatDistance(closesIn)} - ${formatMoment(quiz.closesAt)}`, "text-warning"]
+          : quiz.opensAt
+            ? [`Opened ${formatMoment(quiz.opensAt)}`, "text-muted-foreground"]
+            : ["", ""];
+
+  if (!text) return null;
+
+  return (
+    <p className={cn("mt-3 flex items-center gap-1.5 text-xs font-medium", tone)}>
+      <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{text}</span>
+    </p>
   );
 }
 

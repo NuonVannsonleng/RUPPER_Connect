@@ -48,6 +48,11 @@ export interface AcademicQuiz {
   status: "available" | "completed" | "draft";
   /** The quiz's own state, which a teacher manages independently of anyone's attempt. */
   publishStatus?: "draft" | "available" | "closed";
+  /** Where the schedule has got to - "scheduled" means published but not open yet. */
+  availability?: QuizAvailability;
+  /** ISO instants. Null means that end of the window is unbounded. */
+  opensAt?: string | null;
+  closesAt?: string | null;
   score?: number;
   /** Total points on offer, which is not the question count once questions are weighted. */
   maxScore?: number;
@@ -57,6 +62,9 @@ export interface AcademicQuiz {
 }
 
 export type QuizQuestionType = "mcq" | "true_false";
+
+/** A published quiz can still be waiting for its opening time, or past its closing one. */
+export type QuizAvailability = "draft" | "scheduled" | "available" | "closed";
 
 export interface QuizQuestion {
   id: string;
@@ -97,6 +105,11 @@ export interface QuizDetail {
   description: string;
   timeLimit: number;
   status: "draft" | "available" | "closed";
+  availability: QuizAvailability;
+  opensAt: string | null;
+  closesAt: string | null;
+  /** What to count down from - the time limit, or less if the window closes sooner. */
+  secondsAllowed?: number;
   createdByName?: string;
   maxScore: number;
   questions: QuizQuestion[];

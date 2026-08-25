@@ -12,7 +12,7 @@ import { describe, it, expect } from "vitest";
 process.env.JWT_SECRET ||= "test-secret-long-enough-to-pass-the-32-character-check";
 process.env.DATABASE_URL ||= "postgresql://unused:unused@127.0.0.1:1/unused";
 
-const { gradeQuizAnswers, normalizeQuizQuestions } = (await import("../controllers/academicController.js")).__testing;
+const { gradeQuizAnswers, normalizeQuizQuestions, quizAvailability, secondsAllowed } = (await import("../controllers/academicController.js")).__testing;
 
 const mcq = (overrides = {}) => ({
   question: "Which keyword selects rows?",
@@ -128,5 +128,60 @@ describe("auto grading", () => {
     const result = gradeQuizAnswers([], {});
     expect(result).toMatchObject({ score: 0, maxScore: 0, correctCount: 0 });
     expect(result.detail).toEqual([]);
+  });
+});
+
+describe("scheduled availability", () => {
+  const at = (iso) => new Date(iso);
+  const NOW = at("2026-08-25T12:00:00Z");
+  const quiz = (overrides) => ({ status: "available", opens_at: null, closes_at: null, ...overrides });
+
+  it("is available when published with no window at all", () => {
+    expect(quizAvailability(quiz(), NOW).state).toBe("available");
+  });
+
+  it("stays scheduled until the opening time arrives, then opens itself", () => {
+    const scheduled = quiz({ opens_at: "2026-08-25T14:00:00Z" });
+    expect(quizAvailability(scheduled, NOW).state).toBe("scheduled");
+    // One second past the opening time, nobody having touched it.
+    expect(quizAvailability(scheduled, at("2026-08-25T14:00:01Z")).state).toBe("available");
+  });
+
+  it("closes itself once the closing time passes", () => {
+    const window = quiz({ opens_at: "2026-08-25T10:00:00Z", closes_at: "2026-08-25T13:00:00Z" });
+    expect(quizAvailability(window, NOW).state).toBe("available");
+    expect(quizAvailability(window, at("2026-08-25T13:00:00Z")).state).toBe("closed");
+    expect(quizAvailability(window, at("2026-08-26T09:00:00Z")).state).toBe("closed");
+  });
+
+  it("keeps a draft closed to students however the window reads", () => {
+    const draft = quiz({ status: "draft", opens_at: "2026-08-25T10:00:00Z" });
+    expect(quizAvailability(draft, NOW).state).toBe("draft");
+  });
+
+  it("respects a quiz closed by hand even inside its window", () => {
+    const closed = quiz({ status: "closed", opens_at: "2026-08-25T10:00:00Z", closes_at: "2026-08-25T18:00:00Z" });
+    expect(quizAvailability(closed, NOW).state).toBe("closed");
+  });
+});
+
+describe("how long a student actually gets", () => {
+  const NOW = new Date("2026-08-25T12:00:00Z");
+
+  it("gives the full time limit when nothing closes it early", () => {
+    expect(secondsAllowed({ time_limit_minutes: 30, closes_at: null }, NOW)).toBe(1800);
+  });
+
+  it("trims the countdown to what's left of the window", () => {
+    // Five minutes until it closes, on a thirty minute quiz.
+    expect(secondsAllowed({ time_limit_minutes: 30, closes_at: "2026-08-25T12:05:00Z" }, NOW)).toBe(300);
+  });
+
+  it("keeps the time limit when the window ends well after it", () => {
+    expect(secondsAllowed({ time_limit_minutes: 10, closes_at: "2026-08-25T23:00:00Z" }, NOW)).toBe(600);
+  });
+
+  it("never goes negative once the window has passed", () => {
+    expect(secondsAllowed({ time_limit_minutes: 30, closes_at: "2026-08-25T11:00:00Z" }, NOW)).toBe(0);
   });
 });

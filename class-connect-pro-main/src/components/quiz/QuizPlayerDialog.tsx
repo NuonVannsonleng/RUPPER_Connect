@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/api";
+import { formatMoment } from "@/lib/quizSchedule";
 import type { QuizAnswerDetail, QuizDetail, QuizSubmissionResult } from "@/data/academicPlatform";
 
 type Phase = "intro" | "taking" | "review";
@@ -56,7 +57,9 @@ export function QuizPlayerDialog({ open, onOpenChange, detail, isLoadingDetail, 
       setPhase("review");
     } else {
       setPhase("intro");
-      setSecondsLeft((detail?.timeLimit ?? 20) * 60);
+      // The server works out what's actually left: the quiz's own limit, or less when its
+      // closing time comes first. Falling back to the limit keeps this working if it's absent.
+      setSecondsLeft(detail?.secondsAllowed ?? (detail?.timeLimit ?? 20) * 60);
     }
   }, [open, detail, priorAttempt]);
 
@@ -271,8 +274,16 @@ function IntroPanel({ detail, onStart }: { detail: QuizDetail; onStart: () => vo
       <div className="animate-fade-in grid w-full max-w-md grid-cols-3 gap-3">
         <IntroStat label="Questions" value={detail.questions.length} />
         <IntroStat label="Points" value={detail.maxScore} />
-        <IntroStat label="Minutes" value={detail.timeLimit} />
+        <IntroStat label="Minutes" value={Math.ceil((detail.secondsAllowed ?? detail.timeLimit * 60) / 60)} />
       </div>
+
+      {detail.closesAt && (
+        <p className="animate-fade-in text-xs text-muted-foreground">
+          This quiz closes at <strong className="text-foreground">{formatMoment(detail.closesAt)}</strong>
+          {(detail.secondsAllowed ?? Infinity) < detail.timeLimit * 60 &&
+            " - less than the full time limit, so you have until then."}
+        </p>
+      )}
 
       <div className="animate-fade-in flex items-start gap-2 rounded-xl border border-warning/20 bg-warning/10 px-4 py-3 text-left text-xs text-warning">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

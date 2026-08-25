@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
+  CalendarClock,
   CheckCircle2,
   Circle,
   Copy,
@@ -23,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/api";
+import { formatDistance, isoToLocalInput, localInputToIso } from "@/lib/quizSchedule";
 import type { AcademicCourse, QuizDetail, QuizQuestionType } from "@/data/academicPlatform";
 
 const TRUE_FALSE_OPTIONS = ["True", "False"];
@@ -83,6 +85,8 @@ export function QuizBuilderDialog({
   const [description, setDescription] = useState("");
   const [timeLimit, setTimeLimit] = useState("20");
   const [status, setStatus] = useState<"draft" | "available" | "closed">("draft");
+  const [opensAt, setOpensAt] = useState("");
+  const [closesAt, setClosesAt] = useState("");
   const [questions, setQuestions] = useState<DraftQuestion[]>([blankQuestion()]);
   const [isSaving, setIsSaving] = useState(false);
   const listEndRef = useRef<HTMLDivElement>(null);
@@ -97,6 +101,8 @@ export function QuizBuilderDialog({
       setDescription(detail.description);
       setTimeLimit(String(detail.timeLimit));
       setStatus(detail.status);
+      setOpensAt(isoToLocalInput(detail.opensAt));
+      setClosesAt(isoToLocalInput(detail.closesAt));
       setQuestions(detail.questions.length ? fromDetail(detail) : [blankQuestion()]);
     } else {
       setCourseId(courses[0]?.id ?? "");
@@ -104,6 +110,8 @@ export function QuizBuilderDialog({
       setDescription("");
       setTimeLimit("20");
       setStatus("draft");
+      setOpensAt("");
+      setClosesAt("");
       setQuestions([blankQuestion()]);
     }
   }, [open, detail, courses]);
@@ -113,6 +121,23 @@ export function QuizBuilderDialog({
     [questions]
   );
   const answeredCount = questions.filter((question) => question.correctAnswer.trim()).length;
+
+  // Plain-language echo of the window, so a teacher can see what they just typed will do.
+  const scheduleNote = useMemo(() => {
+    const opens = opensAt ? new Date(opensAt) : null;
+    const closes = closesAt ? new Date(closesAt) : null;
+    if (opens && Number.isNaN(opens.getTime())) return null;
+    if (closes && Number.isNaN(closes.getTime())) return null;
+
+    if (status === "draft") return "Drafts stay hidden from students whatever the schedule says.";
+    if (opens && opens.getTime() > Date.now()) {
+      const window = closes ? ` and close ${formatDistance(closes.getTime() - opens.getTime())} later` : "";
+      return `Opens in ${formatDistance(opens.getTime() - Date.now())}${window}.`;
+    }
+    if (closes && closes.getTime() > Date.now()) return `Open now, closing in ${formatDistance(closes.getTime() - Date.now())}.`;
+    if (closes) return "That closing time has already passed, so students can't take it.";
+    return null;
+  }, [opensAt, closesAt, status]);
 
   const patch = (key: string, changes: Partial<DraftQuestion>) =>
     setQuestions((current) => current.map((item) => (item.key === key ? { ...item, ...changes } : item)));
@@ -195,6 +220,12 @@ export function QuizBuilderDialog({
     const minutes = Number(timeLimit);
     if (!Number.isFinite(minutes) || minutes < 1 || minutes > 600) return "Time limit must be 1-600 minutes.";
 
+    const opens = opensAt ? new Date(opensAt) : null;
+    const closes = closesAt ? new Date(closesAt) : null;
+    if (opens && Number.isNaN(opens.getTime())) return "The opening time isn't a valid date and time.";
+    if (closes && Number.isNaN(closes.getTime())) return "The closing time isn't a valid date and time.";
+    if (opens && closes && closes <= opens) return "The closing time has to be after the opening time.";
+
     for (const [index, question] of questions.entries()) {
       const position = index + 1;
       if (!question.question.trim()) return `Question ${position} needs some text.`;
@@ -229,6 +260,8 @@ export function QuizBuilderDialog({
         description: description.trim(),
         timeLimit: Number(timeLimit),
         status,
+        opensAt: localInputToIso(opensAt),
+        closesAt: localInputToIso(closesAt),
         questions: questions.map((question) => ({
           question: question.question.trim(),
           type: question.type,
@@ -343,6 +376,59 @@ export function QuizBuilderDialog({
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="sm:col-span-2 rounded-xl border border-border/60 bg-secondary/20 p-4">
+                <div className="flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4 text-primary" />
+                  <Label className="text-sm font-semibold">Schedule (optional)</Label>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Set an opening time and a published quiz stays locked until then, opening on its own without you
+                  coming back. A closing time stops new attempts the same way. Leave either blank for no limit.
+                </p>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="quiz-opens" className="text-xs text-muted-foreground">
+                      Opens
+                    </Label>
+                    <Input
+                      id="quiz-opens"
+                      className="mt-1"
+                      type="datetime-local"
+                      value={opensAt}
+                      onChange={(event) => setOpensAt(event.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="quiz-closes" className="text-xs text-muted-foreground">
+                      Closes
+                    </Label>
+                    <Input
+                      id="quiz-closes"
+                      className="mt-1"
+                      type="datetime-local"
+                      value={closesAt}
+                      onChange={(event) => setClosesAt(event.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {scheduleNote && <p className="mt-3 animate-fade-in text-xs font-medium text-primary">{scheduleNote}</p>}
+                {(opensAt || closesAt) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2 h-7 text-xs text-muted-foreground"
+                    onClick={() => {
+                      setOpensAt("");
+                      setClosesAt("");
+                    }}
+                  >
+                    Clear schedule
+                  </Button>
+                )}
               </div>
             </section>
 

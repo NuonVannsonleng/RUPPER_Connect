@@ -234,6 +234,13 @@ const ensureAcademicSchemaLocked = async () => {
        ADD COLUMN IF NOT EXISTS file_data BYTEA,
        ADD COLUMN IF NOT EXISTS file_size INTEGER,
        ADD COLUMN IF NOT EXISTS graded_by INTEGER REFERENCES users(id) ON DELETE SET NULL`,
+    // A scheduled quiz opens and closes on its own. TIMESTAMPTZ rather than the plain
+    // TIMESTAMP used elsewhere in this schema: these two are compared against "now" to decide
+    // whether a student may sit the quiz, so they have to name an instant rather than a wall
+    // clock reading whose zone is anybody's guess.
+    `ALTER TABLE quizzes
+       ADD COLUMN IF NOT EXISTS opens_at TIMESTAMPTZ,
+       ADD COLUMN IF NOT EXISTS closes_at TIMESTAMPTZ`,
   ];
 
   for (const statement of statements) {
@@ -903,6 +910,60 @@ const TRUE_FALSE_OPTIONS = ["True", "False"];
 const canManageQuizzes = (user) => user?.role === "teacher" || user?.role === "admin";
 
 /**
+ * What a published quiz actually is at this moment, once its schedule is taken into account.
+ *
+ * `status` is the teacher's intent and the window is when that intent applies, so a quiz can be
+ * published yet not open yet, or published and already finished, without anyone having to come
+ * back and flip a switch. A quiz with no window set behaves exactly as it did before.
+ *
+ * Exported through __testing - every read and write path leans on this, so it is worth pinning
+ * down directly rather than through the endpoints.
+ */
+const quizAvailability = (quiz, now = new Date()) => {
+  const opensAt = quiz.opens_at ? new Date(quiz.opens_at) : null;
+  const closesAt = quiz.closes_at ? new Date(quiz.closes_at) : null;
+
+  if (quiz.status === "draft") return { state: "draft", opensAt, closesAt };
+  // A quiz closed by hand stays closed even if its window says otherwise.
+  if (quiz.status === "closed") return { state: "closed", opensAt, closesAt };
+
+  if (opensAt && now < opensAt) return { state: "scheduled", opensAt, closesAt };
+  if (closesAt && now >= closesAt) return { state: "closed", opensAt, closesAt };
+  return { state: "available", opensAt, closesAt };
+};
+
+/**
+ * Seconds a student actually has, which is the shorter of the quiz's own countdown and
+ * whatever is left of the window. Starting a 30 minute quiz five minutes before it closes
+ * gives five minutes, not thirty.
+ */
+const secondsAllowed = (quiz, now = new Date()) => {
+  const limit = Number(quiz.time_limit_minutes || 20) * 60;
+  if (!quiz.closes_at) return limit;
+  const untilClose = Math.floor((new Date(quiz.closes_at).getTime() - now.getTime()) / 1000);
+  return Math.max(0, Math.min(limit, untilClose));
+};
+
+/** Timestamps leave as explicit UTC ISO strings - see the SQL note on isoUtc below. */
+const isoOrNull = (value) => (value ? new Date(value).toISOString() : null);
+
+/**
+ * db.js parses every timestamp type straight through as text, so a TIMESTAMPTZ would arrive as
+ * something like "2026-08-25 07:30:00+00" - which not every browser's Date parser accepts.
+ * Selecting it through to_char in UTC gives an unambiguous ISO 8601 instant instead.
+ */
+const isoUtc = (column, alias) =>
+  `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "${alias}"`;
+
+/** Parses one end of the window from the request. Empty means "no bound", which is valid. */
+const readSchedulePoint = (value, label) => {
+  if (value === undefined || value === null || value === "") return { value: null };
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return { error: `${label} isn't a valid date and time` };
+  return { value: parsed.toISOString() };
+};
+
+/**
  * Validates and normalises the question set sent by a teacher.
  *
  * Everything the grader later relies on is established here: the type is one of the two the
@@ -1028,7 +1089,8 @@ const loadQuizOr404 = async (req, res) => {
     return null;
   }
   const [rows] = await pool.query(
-    `SELECT q.*, c.code AS "courseCode", creator.name AS "createdByName"
+    `SELECT q.*, c.code AS "courseCode", creator.name AS "createdByName",
+       ${isoUtc("q.opens_at", "opensAtIso")}, ${isoUtc("q.closes_at", "closesAtIso")}
      FROM quizzes q JOIN courses c ON c.id = q.course_id
      LEFT JOIN users creator ON creator.id = q.created_by
      WHERE q.id = ?`,
@@ -1038,7 +1100,10 @@ const loadQuizOr404 = async (req, res) => {
     res.status(404).json({ message: "Quiz not found" });
     return null;
   }
-  return rows[0];
+  // db.js hands timestamps back as raw text, whose exact spelling depends on the column type.
+  // Everything downstream compares and serialises these, so pin them to the ISO form the
+  // query already produced rather than relying on Date parsing the raw value.
+  return { ...rows[0], opens_at: rows[0].opensAtIso, closes_at: rows[0].closesAtIso };
 };
 
 /** The student's most recent attempt, with the graded snapshot stored alongside it. */
@@ -1074,6 +1139,7 @@ exports.getQuizDetail = async (req, res) => {
 
   const questions = await readQuizQuestions(quiz.id);
   const maxScore = questions.reduce((total, q) => total + q.points, 0);
+  const availability = quizAvailability(quiz);
   const base = {
     id: String(quiz.id),
     courseId: String(quiz.course_id),
@@ -1082,6 +1148,9 @@ exports.getQuizDetail = async (req, res) => {
     description: quiz.description || "",
     timeLimit: Number(quiz.time_limit_minutes || 20),
     status: quiz.status,
+    availability: availability.state,
+    opensAt: isoOrNull(quiz.opens_at),
+    closesAt: isoOrNull(quiz.closes_at),
     createdByName: quiz.createdByName || undefined,
     maxScore,
   };
@@ -1090,17 +1159,24 @@ exports.getQuizDetail = async (req, res) => {
     return res.json({ ...base, questions, canEdit: true });
   }
 
-  // A draft or closed quiz isn't takeable, but someone who already sat it keeps access to
-  // their own result.
+  // Not open yet, already finished, or still a draft - none of those are takeable, but someone
+  // who already sat it keeps access to their own result.
   const attempt = await latestAttempt(quiz.id, req.user.id);
-  if (quiz.status !== "available" && !attempt) {
-    return res.status(403).json({ message: "This quiz isn't open right now" });
+  if (availability.state !== "available" && !attempt) {
+    return res.status(403).json({
+      message:
+        availability.state === "scheduled"
+          ? `This quiz opens on ${new Date(availability.opensAt).toLocaleString("en-GB", { timeZone: "UTC" })} UTC`
+          : "This quiz isn't open right now",
+    });
   }
 
   res.json({
     ...base,
     questions: questions.map(withoutAnswerKey),
     canEdit: false,
+    // What the player counts down from: never more than the window has left.
+    secondsAllowed: secondsAllowed(quiz),
     attempt: attemptReview(attempt),
   });
 };
@@ -1115,6 +1191,7 @@ exports.getQuizzes = async (req, res) => {
   // retake doesn't duplicate the quiz in the list.
   const [rows] = await pool.query(
     `SELECT q.*, c.code AS "courseCode", creator.name AS "createdByName",
+      ${isoUtc("q.opens_at", "opensAtIso")}, ${isoUtc("q.closes_at", "closesAtIso")},
       COALESCE(qc."questionCount", 0) AS "questionCount",
       qc."questionTypes",
       ac."averageScore",
@@ -1159,6 +1236,12 @@ exports.getQuizzes = async (req, res) => {
         // The raw state, kept separate from the student-facing `status` above so a teacher can
         // tell a published quiz from a closed one while a student still sees "completed".
         publishStatus: row.status,
+        // Where the schedule has actually got to, which is what decides whether it can be
+        // taken - "available" here can still mean "not until Friday" in publishStatus terms.
+        availability: quizAvailability({ status: row.status, opens_at: row.opensAtIso, closes_at: row.closesAtIso })
+          .state,
+        opensAt: row.opensAtIso,
+        closesAt: row.closesAtIso,
         score: row.myScore === null || row.myScore === undefined ? undefined : Number(row.myScore),
         maxScore: Number(row.maxPoints || 0),
         attemptCount: Number(row.attemptCount || 0),
@@ -1182,7 +1265,24 @@ const readQuizMeta = (body) => {
   const status = String(body.status ?? "draft").toLowerCase();
   if (!QUIZ_STATUSES.has(status)) return { error: "Unknown quiz status" };
 
-  return { meta: { title, description: String(body.description ?? "").trim() || null, timeLimit, status } };
+  const opens = readSchedulePoint(body.opensAt, "The opening time");
+  if (opens.error) return { error: opens.error };
+  const closes = readSchedulePoint(body.closesAt, "The closing time");
+  if (closes.error) return { error: closes.error };
+  if (opens.value && closes.value && new Date(closes.value) <= new Date(opens.value)) {
+    return { error: "The closing time has to be after the opening time" };
+  }
+
+  return {
+    meta: {
+      title,
+      description: String(body.description ?? "").trim() || null,
+      timeLimit,
+      status,
+      opensAt: opens.value,
+      closesAt: closes.value,
+    },
+  };
 };
 
 exports.createQuiz = async (req, res) => {
@@ -1202,8 +1302,9 @@ exports.createQuiz = async (req, res) => {
   }
 
   const [result] = await pool.query(
-    "INSERT INTO quizzes (course_id, title, description, time_limit_minutes, status, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-    [courseId, meta.title, meta.description, meta.timeLimit, meta.status, req.user.id]
+    `INSERT INTO quizzes (course_id, title, description, time_limit_minutes, status, opens_at, closes_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz, ?)`,
+    [courseId, meta.title, meta.description, meta.timeLimit, meta.status, meta.opensAt, meta.closesAt, req.user.id]
   );
 
   if (questions?.length) await writeQuizQuestions(result.insertId, questions);
@@ -1233,8 +1334,8 @@ exports.updateQuiz = async (req, res) => {
 
   await pool.query(
     `UPDATE quizzes SET course_id = ?, title = ?, description = ?, time_limit_minutes = ?, status = ?,
-      updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    [courseId, meta.title, meta.description, meta.timeLimit, meta.status, quiz.id]
+      opens_at = ?::timestamptz, closes_at = ?::timestamptz, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [courseId, meta.title, meta.description, meta.timeLimit, meta.status, meta.opensAt, meta.closesAt, quiz.id]
   );
 
   if (questions) await writeQuizQuestions(quiz.id, questions);
@@ -1268,11 +1369,26 @@ exports.submitQuizAttempt = async (req, res) => {
     return res.status(400).json({ message: "Invalid quiz" });
   }
 
-  const [quizRows] = await pool.query("SELECT id, status FROM quizzes WHERE id = ?", [quizId]);
+  const [quizRows] = await pool.query(
+    `SELECT id, status, time_limit_minutes, ${isoUtc("opens_at", "opens_at")}, ${isoUtc("closes_at", "closes_at")}
+     FROM quizzes WHERE id = ?`,
+    [quizId]
+  );
   const quiz = quizRows[0];
   if (!quiz) return res.status(404).json({ message: "Quiz not found" });
-  if (quiz.status !== "available") {
-    return res.status(400).json({ message: "This quiz isn't open for attempts" });
+
+  // Checked here and not only in the UI: the window is what actually decides whether an
+  // attempt counts, so a request sent early, late, or straight at the API is refused.
+  const { state } = quizAvailability(quiz);
+  if (state !== "available") {
+    return res.status(400).json({
+      message:
+        state === "scheduled"
+          ? "This quiz hasn't opened yet"
+          : state === "closed"
+            ? "This quiz has closed"
+            : "This quiz isn't open for attempts",
+    });
   }
 
   const questions = await readQuizQuestions(quizId);
@@ -1605,4 +1721,4 @@ exports.checkInAttendanceSession = async (req, res) => {
 
 // Exported for test/quizGrading.test.mjs - the marking rules and the question validation are
 // the two pieces of the quiz feature worth pinning down directly, and both are pure.
-exports.__testing = { gradeQuizAnswers, normalizeQuizQuestions };
+exports.__testing = { gradeQuizAnswers, normalizeQuizQuestions, quizAvailability, secondsAllowed };
