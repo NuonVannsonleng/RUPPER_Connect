@@ -893,6 +893,218 @@ exports.gradeSubmission = async (req, res) => {
   res.json({ message: "Submission graded" });
 };
 
+const QUIZ_STATUSES = new Set(["draft", "available", "closed"]);
+const QUESTION_TYPE_SET = new Set(["mcq", "true_false"]);
+const MAX_QUIZ_QUESTIONS = 100;
+const MAX_QUIZ_OPTIONS = 8;
+const TRUE_FALSE_OPTIONS = ["True", "False"];
+
+/** Teachers and admins both author quizzes; admins get the same reach as a teacher elsewhere too. */
+const canManageQuizzes = (user) => user?.role === "teacher" || user?.role === "admin";
+
+/**
+ * Validates and normalises the question set sent by a teacher.
+ *
+ * Everything the grader later relies on is established here: the type is one of the two the
+ * schema allows, an MCQ has at least two distinct options, and the correct answer is one of
+ * those options rather than free text that nothing could ever match. Returning the reason as a
+ * string keeps the callers to a single shape - `{ error }` or `{ questions }`.
+ */
+const normalizeQuizQuestions = (raw) => {
+  if (raw === undefined) return { questions: null }; // caller decides whether that's allowed
+  if (!Array.isArray(raw)) return { error: "questions must be a list" };
+  if (raw.length > MAX_QUIZ_QUESTIONS) return { error: `A quiz can have at most ${MAX_QUIZ_QUESTIONS} questions` };
+
+  const questions = [];
+  for (const [index, item] of raw.entries()) {
+    const position = index + 1;
+    const text = String(item?.question ?? item?.questionText ?? "").trim();
+    if (!text) return { error: `Question ${position} needs some text` };
+
+    const type = String(item?.type ?? item?.questionType ?? "mcq").toLowerCase();
+    if (!QUESTION_TYPE_SET.has(type)) return { error: `Question ${position} has an unknown type` };
+
+    const points = Number(item?.points ?? 1);
+    if (!Number.isFinite(points) || points <= 0 || points > 1000) {
+      return { error: `Question ${position} needs a points value between 1 and 1000` };
+    }
+
+    let options;
+    if (type === "true_false") {
+      options = [...TRUE_FALSE_OPTIONS];
+    } else {
+      const provided = Array.isArray(item?.options) ? item.options.map((o) => String(o ?? "").trim()) : [];
+      options = provided.filter(Boolean);
+      if (options.length < 2) return { error: `Question ${position} needs at least two answer options` };
+      if (options.length > MAX_QUIZ_OPTIONS) {
+        return { error: `Question ${position} can have at most ${MAX_QUIZ_OPTIONS} options` };
+      }
+      if (new Set(options).size !== options.length) {
+        return { error: `Question ${position} has duplicate options` };
+      }
+    }
+
+    const correctAnswer = String(item?.correctAnswer ?? "").trim();
+    if (!correctAnswer) return { error: `Question ${position} needs a correct answer marked` };
+    if (!options.includes(correctAnswer)) {
+      return { error: `The correct answer for question ${position} has to be one of its options` };
+    }
+
+    questions.push({ text, type, options, correctAnswer, points });
+  }
+
+  return { questions };
+};
+
+/** Replaces a quiz's question set outright. Callers have already validated the input. */
+const writeQuizQuestions = async (quizId, questions) => {
+  await pool.query("DELETE FROM quiz_questions WHERE quiz_id = ?", [quizId]);
+  for (const question of questions) {
+    await pool.query(
+      `INSERT INTO quiz_questions (quiz_id, question_text, question_type, options_json, correct_answer, points)
+       VALUES (?, ?, ?, ?::jsonb, ?, ?)`,
+      [quizId, question.text, question.type, JSON.stringify(question.options), question.correctAnswer, question.points]
+    );
+  }
+};
+
+const readQuizQuestions = async (quizId) => {
+  const [rows] = await pool.query(
+    "SELECT id, question_text, question_type, options_json, correct_answer, points FROM quiz_questions WHERE quiz_id = ? ORDER BY id",
+    [quizId]
+  );
+  return rows.map((row) => ({
+    id: String(row.id),
+    question: row.question_text,
+    type: row.question_type,
+    options: Array.isArray(row.options_json) ? row.options_json : TRUE_FALSE_OPTIONS,
+    correctAnswer: row.correct_answer,
+    points: Number(row.points || 1),
+  }));
+};
+
+/** The shape a student is allowed to see: the same question without the answer key. */
+const withoutAnswerKey = ({ correctAnswer, ...rest }) => rest;
+
+/**
+ * Marks a set of answers against the questions they belong to. Pure, so it can be tested
+ * without a database - see test/quizGrading.test.mjs.
+ *
+ * Answers come in keyed by question id. A question with no answer, or one naming an option
+ * that doesn't exist, scores zero rather than throwing: a student who runs out of time still
+ * gets a graded attempt. The comparison is exact against the stored option text, which is what
+ * the student was given to choose from, so "true" never quietly counts as "True".
+ */
+const gradeQuizAnswers = (questions, submitted = {}) => {
+  const detail = questions.map((question) => {
+    const raw = submitted[question.id];
+    const chosen = raw === undefined || raw === null ? null : String(raw);
+    const isCorrect = chosen !== null && chosen === question.correctAnswer;
+    return {
+      questionId: question.id,
+      question: question.question,
+      type: question.type,
+      options: question.options,
+      chosen,
+      correctAnswer: question.correctAnswer,
+      isCorrect,
+      points: question.points,
+      earned: isCorrect ? question.points : 0,
+    };
+  });
+
+  return {
+    detail,
+    score: detail.reduce((total, item) => total + item.earned, 0),
+    maxScore: questions.reduce((total, question) => total + question.points, 0),
+    correctCount: detail.filter((item) => item.isCorrect).length,
+  };
+};
+
+const loadQuizOr404 = async (req, res) => {
+  const quizId = Number(req.params.id);
+  if (!Number.isInteger(quizId) || quizId <= 0) {
+    res.status(400).json({ message: "Invalid quiz" });
+    return null;
+  }
+  const [rows] = await pool.query(
+    `SELECT q.*, c.code AS "courseCode", creator.name AS "createdByName"
+     FROM quizzes q JOIN courses c ON c.id = q.course_id
+     LEFT JOIN users creator ON creator.id = q.created_by
+     WHERE q.id = ?`,
+    [quizId]
+  );
+  if (!rows.length) {
+    res.status(404).json({ message: "Quiz not found" });
+    return null;
+  }
+  return rows[0];
+};
+
+/** The student's most recent attempt, with the graded snapshot stored alongside it. */
+const latestAttempt = async (quizId, studentId) => {
+  const [rows] = await pool.query(
+    "SELECT id, score, answers_json, submitted_at FROM quiz_attempts WHERE quiz_id = ? AND student_id = ? ORDER BY id DESC LIMIT 1",
+    [quizId, studentId]
+  );
+  return rows[0] || null;
+};
+
+/**
+ * The graded detail is stored on the attempt rather than recomputed on read, so reviewing an
+ * old attempt still shows the question as it was answered even after the teacher edits the
+ * quiz. Older rows predate that and hold a bare answers map; they degrade to score-only.
+ */
+const attemptReview = (attempt) => {
+  if (!attempt) return null;
+  const payload = attempt.answers_json && typeof attempt.answers_json === "object" ? attempt.answers_json : {};
+  return {
+    attemptId: String(attempt.id),
+    score: Number(attempt.score || 0),
+    maxScore: Number(payload.maxScore ?? 0),
+    submittedAt: attempt.submitted_at || null,
+    detail: Array.isArray(payload.detail) ? payload.detail : [],
+  };
+};
+
+exports.getQuizDetail = async (req, res) => {
+  await ensureAcademicSchema();
+  const quiz = await loadQuizOr404(req, res);
+  if (!quiz) return;
+
+  const questions = await readQuizQuestions(quiz.id);
+  const maxScore = questions.reduce((total, q) => total + q.points, 0);
+  const base = {
+    id: String(quiz.id),
+    courseId: String(quiz.course_id),
+    courseCode: quiz.courseCode,
+    title: quiz.title,
+    description: quiz.description || "",
+    timeLimit: Number(quiz.time_limit_minutes || 20),
+    status: quiz.status,
+    createdByName: quiz.createdByName || undefined,
+    maxScore,
+  };
+
+  if (canManageQuizzes(req.user)) {
+    return res.json({ ...base, questions, canEdit: true });
+  }
+
+  // A draft or closed quiz isn't takeable, but someone who already sat it keeps access to
+  // their own result.
+  const attempt = await latestAttempt(quiz.id, req.user.id);
+  if (quiz.status !== "available" && !attempt) {
+    return res.status(403).json({ message: "This quiz isn't open right now" });
+  }
+
+  res.json({
+    ...base,
+    questions: questions.map(withoutAnswerKey),
+    canEdit: false,
+    attempt: attemptReview(attempt),
+  });
+};
+
 exports.getQuizzes = async (req, res) => {
   await seedAcademicData(req.user);
 
@@ -906,17 +1118,19 @@ exports.getQuizzes = async (req, res) => {
       COALESCE(qc."questionCount", 0) AS "questionCount",
       qc."questionTypes",
       ac."averageScore",
+      ac."attemptCount",
       mine.score AS "myScore"
      FROM quizzes q
      JOIN courses c ON q.course_id = c.id
      LEFT JOIN users creator ON creator.id = q.created_by
      LEFT JOIN (
-       SELECT quiz_id, COUNT(*) AS "questionCount", string_agg(DISTINCT question_type, ',') AS "questionTypes"
+       SELECT quiz_id, COUNT(*) AS "questionCount", SUM(points) AS "maxPoints",
+              string_agg(DISTINCT question_type, ',') AS "questionTypes"
        FROM quiz_questions
        GROUP BY quiz_id
      ) qc ON qc.quiz_id = q.id
      LEFT JOIN (
-       SELECT quiz_id, AVG(score) AS "averageScore"
+       SELECT quiz_id, AVG(score) AS "averageScore", COUNT(*) AS "attemptCount"
        FROM quiz_attempts
        GROUP BY quiz_id
      ) ac ON ac.quiz_id = q.id
@@ -942,7 +1156,12 @@ exports.getQuizzes = async (req, res) => {
         questions: Number(row.questionCount || 0),
         timeLimit: Number(row.time_limit_minutes || 20),
         status: row.myScore !== null && row.myScore !== undefined ? "completed" : row.status === "draft" ? "draft" : "available",
+        // The raw state, kept separate from the student-facing `status` above so a teacher can
+        // tell a published quiz from a closed one while a student still sees "completed".
+        publishStatus: row.status,
         score: row.myScore === null || row.myScore === undefined ? undefined : Number(row.myScore),
+        maxScore: Number(row.maxPoints || 0),
+        attemptCount: Number(row.attemptCount || 0),
         averageScore: Math.round(Number(row.averageScore || 0)),
         createdByName: row.createdByName || undefined,
       };
@@ -950,23 +1169,88 @@ exports.getQuizzes = async (req, res) => {
   );
 };
 
+/** Shared by create and update: the fields that describe the quiz itself, validated. */
+const readQuizMeta = (body) => {
+  const title = String(body.title ?? "").trim();
+  if (!title) return { error: "A title is required" };
+
+  const timeLimit = Number(body.timeLimit ?? 20);
+  if (!Number.isFinite(timeLimit) || timeLimit < 1 || timeLimit > 600) {
+    return { error: "The time limit has to be between 1 and 600 minutes" };
+  }
+
+  const status = String(body.status ?? "draft").toLowerCase();
+  if (!QUIZ_STATUSES.has(status)) return { error: "Unknown quiz status" };
+
+  return { meta: { title, description: String(body.description ?? "").trim() || null, timeLimit, status } };
+};
+
 exports.createQuiz = async (req, res) => {
   await ensureAcademicSchema();
   const courseId = await resolveCourseId(req.body.courseId);
-  const { title, description, timeLimit, status } = req.body;
-  if (!courseId || !title) return res.status(400).json({ message: "courseId and title are required" });
+  if (!courseId) return res.status(400).json({ message: "Choose a course for this quiz" });
+
+  const { meta, error: metaError } = readQuizMeta(req.body);
+  if (metaError) return res.status(400).json({ message: metaError });
+
+  const { questions, error: questionError } = normalizeQuizQuestions(req.body.questions);
+  if (questionError) return res.status(400).json({ message: questionError });
+
+  // Publishing a quiz nobody can answer isn't useful; a draft with no questions yet is fine.
+  if (meta.status === "available" && !questions?.length) {
+    return res.status(400).json({ message: "Add at least one question before publishing this quiz" });
+  }
 
   const [result] = await pool.query(
     "INSERT INTO quizzes (course_id, title, description, time_limit_minutes, status, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-    [courseId, title.trim(), description || null, timeLimit || 20, status || "available", req.user.id]
+    [courseId, meta.title, meta.description, meta.timeLimit, meta.status, req.user.id]
   );
-  await pool.query(
-    `INSERT INTO quiz_questions (quiz_id, question_text, question_type, options_json, correct_answer, points)
-     VALUES (?, 'Sample MCQ question', 'mcq', '["A","B","C","D"]'::jsonb, 'A', 1),
-            (?, 'Sample true or false question', 'true_false', '["True","False"]'::jsonb, 'True', 1)`,
-    [result.insertId, result.insertId]
-  );
+
+  if (questions?.length) await writeQuizQuestions(result.insertId, questions);
+
   res.status(201).json({ id: String(result.insertId), message: "Quiz created" });
+};
+
+exports.updateQuiz = async (req, res) => {
+  await ensureAcademicSchema();
+  const quiz = await loadQuizOr404(req, res);
+  if (!quiz) return;
+
+  const { meta, error: metaError } = readQuizMeta(req.body);
+  if (metaError) return res.status(400).json({ message: metaError });
+
+  const { questions, error: questionError } = normalizeQuizQuestions(req.body.questions);
+  if (questionError) return res.status(400).json({ message: questionError });
+
+  const courseId = req.body.courseId ? await resolveCourseId(req.body.courseId) : quiz.course_id;
+  if (!courseId) return res.status(400).json({ message: "Choose a course for this quiz" });
+
+  // `questions` is null when the caller didn't send the key at all - a status-only change, say.
+  const finalCount = questions ? questions.length : Number((await readQuizQuestions(quiz.id)).length);
+  if (meta.status === "available" && !finalCount) {
+    return res.status(400).json({ message: "Add at least one question before publishing this quiz" });
+  }
+
+  await pool.query(
+    `UPDATE quizzes SET course_id = ?, title = ?, description = ?, time_limit_minutes = ?, status = ?,
+      updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [courseId, meta.title, meta.description, meta.timeLimit, meta.status, quiz.id]
+  );
+
+  if (questions) await writeQuizQuestions(quiz.id, questions);
+
+  res.json({ message: "Quiz updated" });
+};
+
+exports.deleteQuiz = async (req, res) => {
+  await ensureAcademicSchema();
+  const quiz = await loadQuizOr404(req, res);
+  if (!quiz) return;
+
+  // quiz_questions and quiz_attempts are both ON DELETE CASCADE, so this takes the attempts
+  // with it - which is why the UI asks first and says how many there are.
+  await pool.query("DELETE FROM quizzes WHERE id = ?", [quiz.id]);
+  res.json({ message: "Quiz deleted" });
 };
 
 exports.submitQuizAttempt = async (req, res) => {
@@ -991,13 +1275,84 @@ exports.submitQuizAttempt = async (req, res) => {
     return res.status(400).json({ message: "This quiz isn't open for attempts" });
   }
 
-  const [questions] = await pool.query("SELECT COUNT(*) AS total FROM quiz_questions WHERE quiz_id = ?", [quizId]);
-  const score = Math.max(1, Number(questions[0]?.total || 1));
-  await pool.query(
-    "INSERT INTO quiz_attempts (quiz_id, student_id, answers_json, score, submitted_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-    [quizId, req.user.id, JSON.stringify(req.body.answers || {}), score]
+  const questions = await readQuizQuestions(quizId);
+  if (!questions.length) return res.status(400).json({ message: "This quiz has no questions yet" });
+
+  // Answers arrive keyed by question id. Anything missing or unrecognised simply scores zero
+  // rather than failing the submission - a student who runs out of time still gets a result.
+  const submitted = req.body.answers && typeof req.body.answers === "object" ? req.body.answers : {};
+
+  const { detail, score, maxScore, correctCount } = gradeQuizAnswers(questions, submitted);
+
+  // The whole graded breakdown is stored on the attempt, not just the raw answers, so a review
+  // still reads correctly after the teacher edits or reorders the quiz.
+  const [result] = await pool.query(
+    "INSERT INTO quiz_attempts (quiz_id, student_id, answers_json, score, submitted_at) VALUES (?, ?, ?::jsonb, ?, CURRENT_TIMESTAMP)",
+    [quizId, req.user.id, JSON.stringify({ answers: submitted, detail, maxScore }), score]
   );
-  res.status(201).json({ score, message: "Quiz submitted" });
+
+  res.status(201).json({
+    attemptId: String(result.insertId),
+    score,
+    maxScore,
+    correctCount,
+    totalQuestions: detail.length,
+    detail,
+    message: "Quiz submitted",
+  });
+};
+
+/**
+ * Teachers and admins get every attempt on the quiz; a student gets their own latest one.
+ * Both include the answer key - for the student that is only reachable once they have
+ * actually submitted, which is what makes it safe to reveal.
+ */
+exports.getQuizResults = async (req, res) => {
+  await ensureAcademicSchema();
+  const quiz = await loadQuizOr404(req, res);
+  if (!quiz) return;
+
+  if (!canManageQuizzes(req.user)) {
+    const attempt = await latestAttempt(quiz.id, req.user.id);
+    if (!attempt) return res.status(404).json({ message: "You haven't taken this quiz yet" });
+    return res.json({ quizTitle: quiz.title, mine: attemptReview(attempt) });
+  }
+
+  const [rows] = await pool.query(
+    `SELECT a.id, a.score, a.answers_json, a.submitted_at, u.id AS "studentId", u.name AS "studentName",
+      u.email AS "studentEmail"
+     FROM quiz_attempts a
+     JOIN users u ON u.id = a.student_id
+     WHERE a.quiz_id = ?
+     ORDER BY a.submitted_at DESC NULLS LAST, a.id DESC`,
+    [quiz.id]
+  );
+
+  const questions = await readQuizQuestions(quiz.id);
+  const maxScore = questions.reduce((total, question) => total + question.points, 0);
+
+  const attempts = rows.map((row) => ({
+    ...attemptReview(row),
+    studentId: String(row.studentId),
+    studentName: row.studentName,
+    studentEmail: row.studentEmail,
+    // Older attempts stored no maxScore of their own; fall back to the quiz's current total.
+    maxScore: Number(row.answers_json?.maxScore ?? maxScore),
+  }));
+
+  const scores = attempts.map((attempt) => attempt.score);
+  res.json({
+    quizTitle: quiz.title,
+    maxScore,
+    questions,
+    attempts,
+    stats: {
+      attemptCount: attempts.length,
+      averageScore: scores.length ? Number((scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)) : 0,
+      highestScore: scores.length ? Math.max(...scores) : 0,
+      lowestScore: scores.length ? Math.min(...scores) : 0,
+    },
+  });
 };
 
 exports.getCalendarEvents = async (req, res) => {
@@ -1247,3 +1602,7 @@ exports.checkInAttendanceSession = async (req, res) => {
 
   res.json({ message: "Attendance recorded" });
 };
+
+// Exported for test/quizGrading.test.mjs - the marking rules and the question validation are
+// the two pieces of the quiz feature worth pinning down directly, and both are pure.
+exports.__testing = { gradeQuizAnswers, normalizeQuizQuestions };

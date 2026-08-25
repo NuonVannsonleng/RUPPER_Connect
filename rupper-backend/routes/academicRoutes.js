@@ -22,7 +22,12 @@ router.put("/assignment-submissions/:id/grade", auth, requireTeacher, asyncHandl
 
 router.get("/quizzes", auth, asyncHandler(c.getQuizzes));
 router.post("/quizzes", auth, requireTeacher, asyncHandler(c.createQuiz));
+// Role-aware rather than teacher-gated: a student gets the same quiz without the answer key.
+router.get("/quizzes/:id", auth, asyncHandler(c.getQuizDetail));
+router.put("/quizzes/:id", auth, requireTeacher, asyncHandler(c.updateQuiz));
+router.delete("/quizzes/:id", auth, requireTeacher, asyncHandler(c.deleteQuiz));
 router.post("/quizzes/:id/attempts", auth, asyncHandler(c.submitQuizAttempt));
+router.get("/quizzes/:id/results", auth, asyncHandler(c.getQuizResults));
 
 router.get("/calendar", auth, asyncHandler(c.getCalendarEvents));
 router.post("/calendar", auth, requireTeacher, asyncHandler(c.createCalendarEvent));
