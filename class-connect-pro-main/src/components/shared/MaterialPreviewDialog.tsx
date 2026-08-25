@@ -32,6 +32,30 @@ async function fetchMaterialBlob(downloadUrl: string) {
   return res.blob();
 }
 
+/**
+ * The type on a preview blob is set here from the extension, never from the server response.
+ *
+ * A `blob:` URL runs in this app's origin, so an object URL that ended up typed `text/html`
+ * would execute its contents with access to the signed-in user's session the moment it was
+ * put in the iframe below. The backend now pins the stored type to the extension too; this is
+ * the second half of that, so a bad Content-Type can never reach createObjectURL.
+ */
+const PREVIEW_MIME: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  m4v: "video/x-m4v",
+};
+
+const asPreviewBlob = (blob: Blob, extension: string) =>
+  new Blob([blob], { type: PREVIEW_MIME[extension] || "application/octet-stream" });
+
 interface MaterialPreviewDialogProps {
   material: AcademicMaterial | null;
   onClose: () => void;
@@ -61,7 +85,7 @@ export function MaterialPreviewDialog({ material, onClose }: MaterialPreviewDial
             await renderAsync(blob, docxContainerRef.current);
           }
         } else {
-          createdUrl = URL.createObjectURL(blob);
+          createdUrl = URL.createObjectURL(asPreviewBlob(blob, extension));
           if (!cancelled) setObjectUrl(createdUrl);
         }
         if (!cancelled) setStatus("ready");

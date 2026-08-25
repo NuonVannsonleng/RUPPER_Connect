@@ -563,13 +563,67 @@ const ALLOWED_MATERIAL_EXTENSIONS = new Set([
   "mp4", "webm", "mov", "m4v",
 ]);
 
+/**
+ * The content type a file is served with is derived here from its (already allow-listed)
+ * extension, never from the `fileMime` the uploader sends.
+ *
+ * Trusting the client's value was exploitable: the upload check only looks at the extension,
+ * so a file called `notes.pdf` could be sent with `fileMime: "text/html"` and HTML content.
+ * The preview dialog fetches the file and hands the blob to URL.createObjectURL, which takes
+ * its type from the stored mime - and a `blob:` URL in an iframe runs in the *app's* origin,
+ * so the uploaded markup would execute with access to the signed-in viewer's localStorage
+ * token. Anything not listed here is served as a download rather than a renderable type.
+ */
+const MIME_BY_EXTENSION = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  m4v: "video/x-m4v",
+  txt: "text/plain",
+  csv: "text/csv",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+const mimeForExtension = (extension) => MIME_BY_EXTENSION[extension] || "application/octet-stream";
+
+const mimeForFileName = (fileName) => mimeForExtension(String(fileName || "").split(".").pop()?.toLowerCase());
+
+/**
+ * Sends a file held in the database with a content type derived from its name rather than the
+ * stored one, so rows written before that was enforced are served safely too.
+ *
+ * The filename is stripped of quotes and control characters before it reaches the header:
+ * a CR or LF in a stored name would otherwise either split the response or (on current Node)
+ * throw and turn a download into a 500.
+ */
+const sendStoredFile = (res, fileName, data) => {
+  const safeName = String(fileName).replace(/["\\]/g, "").replace(/[\r\n\t\x00-\x1f\x7f]/g, " ").trim() || "download";
+  res.setHeader("Content-Type", mimeForFileName(fileName));
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+  res.send(data);
+};
+
 exports.createMaterial = async (req, res) => {
   await ensureAcademicSchema();
   const courseId = await resolveCourseId(req.params.courseId);
-  const { title, type, fileUrl, fileName, fileMime, fileData } = req.body;
+  // fileMime is deliberately not read from the body - see mimeForExtension.
+  const { title, type, fileUrl, fileName, fileData } = req.body;
   if (!courseId || !title) return res.status(400).json({ message: "courseId and title are required" });
 
   let buffer = null;
+  let storedMime = null;
   if (fileData) {
     const extension = String(fileName || "").split(".").pop()?.toLowerCase();
     if (!extension || !ALLOWED_MATERIAL_EXTENSIONS.has(extension)) {
@@ -582,6 +636,8 @@ exports.createMaterial = async (req, res) => {
     if (buffer.length > MAX_MATERIAL_BYTES) {
       return res.status(413).json({ message: "File is too large. Maximum size is 8MB." });
     }
+
+    storedMime = mimeForExtension(extension);
   }
 
   const [result] = await pool.query(
@@ -594,7 +650,7 @@ exports.createMaterial = async (req, res) => {
       materialTypeToDb(type),
       buffer ? null : fileUrl || null,
       buffer ? fileName || title.trim() : null,
-      buffer ? fileMime || "application/octet-stream" : null,
+      storedMime,
       buffer,
       buffer ? buffer.length : null,
       req.user.id,
@@ -612,9 +668,9 @@ exports.downloadMaterial = async (req, res) => {
   const material = rows[0];
   if (!material || !material.file_data) return res.status(404).json({ message: "File not found" });
 
-  res.setHeader("Content-Type", material.file_mime || "application/octet-stream");
-  res.setHeader("Content-Disposition", `attachment; filename="${(material.file_name || material.title).replace(/"/g, "")}"`);
-  res.send(material.file_data);
+  // Re-derived on the way out as well as on the way in, so rows stored before the mime was
+  // pinned to the extension can't still be served as a renderable type.
+  sendStoredFile(res, material.file_name || material.title, material.file_data);
 };
 
 exports.getCourseEnrollments = async (req, res) => {
@@ -730,7 +786,8 @@ exports.submitAssignment = async (req, res) => {
     return res.status(403).json({ message: "Only students can submit assignments" });
   }
 
-  const { fileName, fileMime, fileData } = req.body;
+  // fileMime is deliberately not read from the body - see mimeForExtension.
+  const { fileName, fileData } = req.body;
   if (!fileData || !fileName) {
     return res.status(400).json({ message: "Choose a file to submit" });
   }
@@ -769,7 +826,7 @@ exports.submitAssignment = async (req, res) => {
        file_name = EXCLUDED.file_name, file_mime = EXCLUDED.file_mime, file_data = EXCLUDED.file_data,
        file_size = EXCLUDED.file_size, status = 'submitted', submitted_at = CURRENT_TIMESTAMP,
        score = NULL, feedback = NULL, graded_at = NULL, graded_by = NULL`,
-    [req.params.id, req.user.id, fileName, fileMime || "application/octet-stream", buffer, buffer.length]
+    [req.params.id, req.user.id, fileName, mimeForExtension(extension), buffer, buffer.length]
   );
 
   res.status(201).json({ message: "Assignment submitted" });
@@ -821,9 +878,7 @@ exports.downloadSubmission = async (req, res) => {
     return res.status(403).json({ message: "You don't have access to this file" });
   }
 
-  res.setHeader("Content-Type", submission.file_mime || "application/octet-stream");
-  res.setHeader("Content-Disposition", `attachment; filename="${(submission.file_name || "submission").replace(/"/g, "")}"`);
-  res.send(submission.file_data);
+  sendStoredFile(res, submission.file_name || "submission", submission.file_data);
 };
 
 exports.gradeSubmission = async (req, res) => {
