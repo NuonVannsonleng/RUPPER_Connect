@@ -48,7 +48,7 @@ import {
   useQuizResults,
 } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
-import { availabilityAt, formatDistance, formatMoment } from "@/lib/quizSchedule";
+import { availabilityAt, describeSchedule, formatDistance } from "@/lib/quizSchedule";
 import { cn } from "@/lib/utils";
 
 const statusTone: Record<string, string> = {
@@ -97,9 +97,15 @@ export default function Quizzes() {
   const quizzesLoaded = dataUpdatedAt > 0;
   const isRealQuiz = (quiz: AcademicQuiz) => quizzesLoaded && /^\d+$/.test(quiz.id);
 
-  // Only run a clock if something is actually waiting on one.
-  const hasSchedule = quizzes.some((quiz) => quiz.opensAt || quiz.closesAt);
-  const now = useClock(hasSchedule);
+  // Only run a clock while some quiz still has a transition ahead of it. A draft or a quiz
+  // closed by hand isn't going anywhere on its own, and neither is a window already past, so
+  // once nothing is pending this re-evaluates to false and the interval stops.
+  const hasPendingSchedule = quizzes.some((quiz) => {
+    if (quiz.publishStatus === "draft" || quiz.publishStatus === "closed") return false;
+    const moments = [quiz.opensAt, quiz.closesAt].filter(Boolean) as string[];
+    return moments.some((moment) => Date.parse(moment) > Date.now());
+  });
+  const now = useClock(hasPendingSchedule);
 
   const available = quizzes.filter((quiz) => quiz.status === "available").length;
   const completed = quizzes.filter((quiz) => quiz.status === "completed").length;
@@ -356,28 +362,19 @@ export default function Quizzes() {
 
 /** The one-line summary of where a quiz sits in its window, or nothing if it has none. */
 function ScheduleLine({ quiz, live, now }: { quiz: AcademicQuiz; live: QuizAvailability; now: number }) {
-  if (!quiz.opensAt && !quiz.closesAt) return null;
+  const label = describeSchedule(quiz, live, now);
+  if (!label) return null;
 
-  const opensIn = quiz.opensAt ? Date.parse(quiz.opensAt) - now : null;
-  const closesIn = quiz.closesAt ? Date.parse(quiz.closesAt) - now : null;
-
-  const [text, tone] =
-    live === "scheduled" && opensIn !== null
-      ? [`Opens in ${formatDistance(opensIn)} - ${formatMoment(quiz.opensAt)}`, "text-info"]
-      : live === "closed" && closesIn !== null && closesIn <= 0
-        ? [`Closed ${formatMoment(quiz.closesAt)}`, "text-muted-foreground"]
-        : closesIn !== null && closesIn > 0
-          ? [`Closes in ${formatDistance(closesIn)} - ${formatMoment(quiz.closesAt)}`, "text-warning"]
-          : quiz.opensAt
-            ? [`Opened ${formatMoment(quiz.opensAt)}`, "text-muted-foreground"]
-            : ["", ""];
-
-  if (!text) return null;
+  const toneClass = {
+    info: "text-info",
+    warning: "text-warning",
+    muted: "text-muted-foreground",
+  }[label.tone];
 
   return (
-    <p className={cn("mt-3 flex items-center gap-1.5 text-xs font-medium", tone)}>
+    <p className={cn("mt-3 flex items-center gap-1.5 text-xs font-medium", toneClass)}>
       <CalendarClock className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">{text}</span>
+      <span className="truncate">{label.text}</span>
     </p>
   );
 }

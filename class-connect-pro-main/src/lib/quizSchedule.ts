@@ -69,6 +69,57 @@ export const isoToLocalInput = (iso: string | null | undefined) => {
   )}`;
 };
 
+export interface ScheduleLabel {
+  text: string;
+  tone: "info" | "warning" | "muted";
+}
+
+/**
+ * The one-line summary of where a quiz sits in its window.
+ *
+ * Branches on the state before it looks at the clock, which is the whole point: a quiz closed
+ * by hand still carries a closing time in the future, and reading that time on its own says
+ * "closes in 14m" about a quiz that is already shut. The state wins, the clock only fills in
+ * the wording.
+ */
+export const describeSchedule = (
+  quiz: { opensAt?: string | null; closesAt?: string | null },
+  live: QuizAvailability,
+  now: number
+): ScheduleLabel | null => {
+  if (!quiz.opensAt && !quiz.closesAt) return null;
+
+  const opensIn = quiz.opensAt ? Date.parse(quiz.opensAt) - now : null;
+  const closesIn = quiz.closesAt ? Date.parse(quiz.closesAt) - now : null;
+
+  if (live === "closed") {
+    if (closesIn !== null && closesIn > 0) {
+      return { text: `Closed early - was due ${formatMoment(quiz.closesAt)}`, tone: "muted" };
+    }
+    return { text: quiz.closesAt ? `Closed ${formatMoment(quiz.closesAt)}` : "Closed", tone: "muted" };
+  }
+
+  // A draft is hidden from students regardless, so its window is a plan, not something running.
+  if (live === "draft") {
+    return {
+      text: quiz.opensAt
+        ? `Draft - set to open ${formatMoment(quiz.opensAt)}`
+        : `Draft - set to close ${formatMoment(quiz.closesAt)}`,
+      tone: "muted",
+    };
+  }
+
+  if (live === "scheduled" && opensIn !== null) {
+    return { text: `Opens in ${formatDistance(opensIn)} - ${formatMoment(quiz.opensAt)}`, tone: "info" };
+  }
+
+  if (closesIn !== null && closesIn > 0) {
+    return { text: `Closes in ${formatDistance(closesIn)} - ${formatMoment(quiz.closesAt)}`, tone: "warning" };
+  }
+
+  return quiz.opensAt ? { text: `Opened ${formatMoment(quiz.opensAt)}`, tone: "muted" } : null;
+};
+
 export const localInputToIso = (value: string) => {
   if (!value) return null;
   const date = new Date(value); // parsed in the browser's zone, which is what was typed
