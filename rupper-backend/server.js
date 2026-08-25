@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const getConnection = require("./db");
 const { dedupeSeedData } = require("./migrations/dedupeSeedData");
 const { bootstrapAdmin, ensurePasswordChangedColumn, ensureUserStatusColumn } = require("./config/bootstrapAdmin");
@@ -16,6 +17,22 @@ const allowedOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL ||
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
+
+// Response headers the browser enforces. This API only ever returns JSON and file downloads,
+// so the restrictive defaults cost nothing here:
+//   - nosniff stops a download being re-interpreted as HTML or script by content sniffing
+//   - HSTS keeps browsers on HTTPS once they have seen the site
+//   - frameguard/CSP mean nothing served from this origin can be framed or run script
+// CORP is relaxed to cross-origin because the frontend is on a different domain and has to
+// be able to read these responses at all.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"], sandbox: [] },
+    },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
 
 app.use(
   cors({
