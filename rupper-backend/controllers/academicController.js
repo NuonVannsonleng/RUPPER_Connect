@@ -7,6 +7,11 @@ const ACADEMIC_SCHEMA_LOCK = 811001;
 const ACADEMIC_SEED_LOCK = 811002;
 
 let schemaReady = false;
+// In-flight de-duplication, so the several dashboard requests that arrive together do the
+// one-time schema and seed work once between them rather than once each.
+let schemaPromise = null;
+let sharedSeedPromise = null;
+const studentSeedPromises = new Map();
 
 // "slides" is a legacy value from before Document/Presentation/Spreadsheet existed - old rows
 // keep working, they just render with the Presentation label rather than needing a data migration.
@@ -76,16 +81,28 @@ const timeAgo = (value) => {
 const ensureAcademicSchema = async () => {
   if (schemaReady) return;
 
-  // Parallel first requests (courses, assignments, quizzes, calendar all fire together on
-  // page load) would otherwise race here - the ALTER TABLEs below aren't safe to run
-  // concurrently the way CREATE TABLE IF NOT EXISTS is. A Postgres advisory lock serialises
-  // them; see withAdvisoryLock in db.js for why it needs its own connection.
-  await withAdvisoryLock(ACADEMIC_SCHEMA_LOCK, ensureAcademicSchemaLocked);
+  // The dashboard fires courses, assignments, quizzes and calendar together, so this is hit
+  // by several requests at once. They share one in-flight promise rather than each queueing
+  // for the lock - across processes the advisory lock still serialises, but within this one
+  // the work happens exactly once. On failure the promise is cleared so the next request
+  // retries instead of inheriting the error forever.
+  if (!schemaPromise) {
+    schemaPromise = withAdvisoryLock(ACADEMIC_SCHEMA_LOCK, ensureAcademicSchemaLocked)
+      .then(() => {
+        schemaReady = true;
+      })
+      .catch((error) => {
+        schemaPromise = null;
+        throw error;
+      });
+  }
+
+  await schemaPromise;
 };
 
-const ensureAcademicSchemaLocked = async () => {
-  if (schemaReady) return;
-
+// `query` is bound to the connection holding the lock - see withAdvisoryLock in db.js.
+// Using the pool here instead would deadlock.
+const ensureAcademicSchemaLocked = async (query) => {
   const statements = [
     `CREATE TABLE IF NOT EXISTS courses (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -241,13 +258,27 @@ const ensureAcademicSchemaLocked = async () => {
     `ALTER TABLE quizzes
        ADD COLUMN IF NOT EXISTS opens_at TIMESTAMPTZ,
        ADD COLUMN IF NOT EXISTS closes_at TIMESTAMPTZ`,
+    // MySQL indexes every foreign key automatically; Postgres does not, so the move silently
+    // dropped the indexes behind most of the joins below. Without these, every dashboard
+    // query sequential-scans the whole table.
+    `CREATE INDEX IF NOT EXISTS idx_enrollments_student ON course_enrollments (student_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_materials_course ON course_materials (course_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_assignments_course ON course_assignments (course_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_assignments_deadline ON course_assignments (deadline)`,
+    `CREATE INDEX IF NOT EXISTS idx_submissions_student ON assignment_submissions (student_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_quiz_questions_quiz ON quiz_questions (quiz_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_quiz_attempts_quiz_student ON quiz_attempts (quiz_id, student_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_calendar_date ON academic_calendar_events (event_date)`,
+    `CREATE INDEX IF NOT EXISTS idx_transcripts_student ON transcript_records (student_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages (receiver_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_courses_lecturer ON courses (lecturer_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_users_role ON users (role)`,
   ];
 
   for (const statement of statements) {
-    await pool.query(statement);
+    await query(statement);
   }
-
-  schemaReady = true;
 };
 
 const resolveCourseId = async (courseId) => {
@@ -262,18 +293,45 @@ const resolveCourseId = async (courseId) => {
   return rows[0]?.id || null;
 };
 
+/**
+ * Puts demo content in front of a brand new database so the dashboard isn't empty.
+ *
+ * Six endpoints call this and the frontend requests them in parallel, so the shape matters
+ * as much as the content. It used to take the advisory lock and re-run every COUNT on every
+ * single request forever, which serialised the whole dashboard behind one lock - roughly ten
+ * round trips per endpoint, six endpoints deep, on every page load.
+ *
+ * Now the shared content is seeded once per process and each student's enrolments once per
+ * student, both de-duplicated by an in-flight promise so parallel callers share one run.
+ * Steady state costs nothing: no lock, no queries.
+ */
 const seedAcademicData = async (user) => {
   await ensureAcademicSchema();
 
-  // Several endpoints call this on first load (courses, assignments, quizzes, calendar, ...),
-  // and the frontend fires those requests in parallel. Without a lock, concurrent requests
-  // all see an empty table at once and each inserts its own copy of the seed rows, producing
-  // duplicates. The advisory lock serialises the check-then-insert so only one request seeds.
-  await withAdvisoryLock(ACADEMIC_SEED_LOCK, () => seedAcademicDataLocked(user));
+  if (!sharedSeedPromise) {
+    sharedSeedPromise = withAdvisoryLock(ACADEMIC_SEED_LOCK, (query) => seedSharedData(query, user)).catch((error) => {
+      sharedSeedPromise = null;
+      throw error;
+    });
+  }
+  await sharedSeedPromise;
+
+  if (user.role !== "student") return;
+
+  let pending = studentSeedPromises.get(user.id);
+  if (!pending) {
+    pending = withAdvisoryLock(ACADEMIC_SEED_LOCK, (query) => seedStudentData(query, user)).catch((error) => {
+      studentSeedPromises.delete(user.id);
+      throw error;
+    });
+    studentSeedPromises.set(user.id, pending);
+  }
+  await pending;
 };
 
-const seedAcademicDataLocked = async (user) => {
-  const [courseCountRows] = await pool.query("SELECT COUNT(*) AS total FROM courses");
+// `query` is bound to the connection holding the lock - see withAdvisoryLock in db.js.
+const seedSharedData = async (query, user) => {
+  const [courseCountRows] = await query("SELECT COUNT(*) AS total FROM courses");
   if (Number(courseCountRows[0].total) === 0) {
     const lecturerId = user.role === "teacher" ? user.id : null;
     const courses = [
@@ -283,7 +341,7 @@ const seedAcademicDataLocked = async (user) => {
     ];
 
     for (const course of courses) {
-      await pool.query(
+      await query(
         `INSERT INTO courses
           (code, title, faculty, department, lecturer_id, credits, semester, room, schedule_label, description)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -293,10 +351,10 @@ const seedAcademicDataLocked = async (user) => {
     }
   }
 
-  const [courses] = await pool.query("SELECT id, code FROM courses ORDER BY id");
+  const [courses] = await query("SELECT id, code FROM courses ORDER BY id");
   const byCode = Object.fromEntries(courses.map((course) => [course.code, course.id]));
 
-  const [materialCount] = await pool.query("SELECT COUNT(*) AS total FROM course_materials");
+  const [materialCount] = await query("SELECT COUNT(*) AS total FROM course_materials");
   if (Number(materialCount[0].total) === 0 && courses.length) {
     const materials = [
       [byCode.CS301, "ER Modeling Guide", "pdf"],
@@ -308,14 +366,14 @@ const seedAcademicDataLocked = async (user) => {
     ].filter(([courseId]) => courseId);
 
     for (const [courseId, title, type] of materials) {
-      await pool.query(
+      await query(
         "INSERT INTO course_materials (course_id, title, material_type, created_by) VALUES (?, ?, ?, ?)",
         [courseId, title, type, user.id]
       );
     }
   }
 
-  const [assignmentCount] = await pool.query("SELECT COUNT(*) AS total FROM course_assignments");
+  const [assignmentCount] = await query("SELECT COUNT(*) AS total FROM course_assignments");
   if (Number(assignmentCount[0].total) === 0 && courses.length) {
     const assignments = [
       [byCode.CS301, "Library Database Design", "Design a normalized schema for a small library system.", "2026-07-18 23:59:00", 100],
@@ -325,14 +383,14 @@ const seedAcademicDataLocked = async (user) => {
     ].filter(([courseId]) => courseId);
 
     for (const row of assignments) {
-      await pool.query(
+      await query(
         "INSERT INTO course_assignments (course_id, title, description, deadline, max_score, created_by) VALUES (?, ?, ?, ?, ?, ?)",
         [...row, user.id]
       );
     }
   }
 
-  const [quizCount] = await pool.query("SELECT COUNT(*) AS total FROM quizzes");
+  const [quizCount] = await query("SELECT COUNT(*) AS total FROM quizzes");
   if (Number(quizCount[0].total) === 0 && courses.length) {
     const quizzes = [
       [byCode.CS301, "SQL Fundamentals", "MCQ and true/false SQL check.", 25, "available"],
@@ -341,11 +399,11 @@ const seedAcademicDataLocked = async (user) => {
     ].filter(([courseId]) => courseId);
 
     for (const [courseId, title, description, minutes, status] of quizzes) {
-      const [result] = await pool.query(
+      const [result] = await query(
         "INSERT INTO quizzes (course_id, title, description, time_limit_minutes, status, created_by) VALUES (?, ?, ?, ?, ?, ?)",
         [courseId, title, description, minutes, status, user.id]
       );
-      await pool.query(
+      await query(
         `INSERT INTO quiz_questions (quiz_id, question_text, question_type, options_json, correct_answer, points)
          VALUES (?, ?, 'mcq', '["A","B","C","D"]'::jsonb, 'A', 1),
                 (?, ?, 'true_false', '["True","False"]'::jsonb, 'True', 1)`,
@@ -354,7 +412,7 @@ const seedAcademicDataLocked = async (user) => {
     }
   }
 
-  const [calendarCount] = await pool.query("SELECT COUNT(*) AS total FROM academic_calendar_events");
+  const [calendarCount] = await query("SELECT COUNT(*) AS total FROM academic_calendar_events");
   if (Number(calendarCount[0].total) === 0) {
     const events = [
       ["Database Midterm Exam", "2026-07-22", "exam", byCode.CS301, "urgent"],
@@ -363,37 +421,43 @@ const seedAcademicDataLocked = async (user) => {
       ["Constitution Day Holiday", "2026-09-24", "holiday", null, "normal"],
     ];
     for (const event of events) {
-      await pool.query(
+      await query(
         "INSERT INTO academic_calendar_events (title, event_date, event_type, course_id, priority, created_by) VALUES (?, ?, ?, ?, ?, ?)",
         [...event, user.id]
       );
     }
   }
 
-  if (user.role === "student") {
-    for (const course of courses) {
-      await pool.query(
-        `INSERT INTO course_enrollments (course_id, student_id, progress, attendance_percentage, current_grade)
-         VALUES (?, ?, 72, 94, 86)
-         ON CONFLICT (course_id, student_id) DO NOTHING`,
-        [course.id, user.id]
-      );
-    }
+};
 
-    const [transcriptCount] = await pool.query("SELECT COUNT(*) AS total FROM transcript_records WHERE student_id = ?", [user.id]);
-    if (Number(transcriptCount[0].total) === 0) {
-      const records = [
-        [null, "Year 1 - Semester 1", 3, "B+", 3.3],
-        [null, "Year 1 - Semester 1", 3, "A-", 3.7],
-        [byCode.CS301 || null, "Year 2 - Semester 2", 3, "A-", 3.7],
-        [byCode.SE220 || null, "Year 2 - Semester 2", 3, "B+", 3.3],
-      ];
-      for (const row of records) {
-        await pool.query(
-          "INSERT INTO transcript_records (student_id, course_id, semester, credits, grade_letter, grade_point) VALUES (?, ?, ?, ?, ?, ?)",
-          [user.id, ...row]
-        );
-      }
+/** Enrolments and a starter transcript, which exist per student rather than once globally. */
+const seedStudentData = async (query, user) => {
+  const [courses] = await query("SELECT id, code FROM courses ORDER BY id");
+  if (!courses.length) return;
+
+  const byCode = Object.fromEntries(courses.map((course) => [course.code, course.id]));
+
+  // One statement for every course rather than one round trip each.
+  await query(
+    `INSERT INTO course_enrollments (course_id, student_id, progress, attendance_percentage, current_grade)
+     SELECT id, ?, 72, 94, 86 FROM courses
+     ON CONFLICT (course_id, student_id) DO NOTHING`,
+    [user.id]
+  );
+
+  const [transcriptCount] = await query("SELECT COUNT(*) AS total FROM transcript_records WHERE student_id = ?", [user.id]);
+  if (Number(transcriptCount[0].total) === 0) {
+    const records = [
+      [null, "Year 1 - Semester 1", 3, "B+", 3.3],
+      [null, "Year 1 - Semester 1", 3, "A-", 3.7],
+      [byCode.CS301 || null, "Year 2 - Semester 2", 3, "A-", 3.7],
+      [byCode.SE220 || null, "Year 2 - Semester 2", 3, "B+", 3.3],
+    ];
+    for (const row of records) {
+      await query(
+        "INSERT INTO transcript_records (student_id, course_id, semester, credits, grade_letter, grade_point) VALUES (?, ?, ?, ?, ?, ?)",
+        [user.id, ...row]
+      );
     }
   }
 };

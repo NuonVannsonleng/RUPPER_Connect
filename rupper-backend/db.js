@@ -121,9 +121,9 @@ function buildPoolConfig() {
 
   const shared = {
     ssl,
-    // Supabase's free tier has a modest connection budget and withAdvisoryLock checks out a
-    // second client while it holds a lock, so keep this well under the limit.
-    max: Number(process.env.DB_POOL_MAX || 5),
+    // Sized for the dashboard, which fires six requests at once: too small and they queue
+    // behind each other for a connection. Still well under Supabase's pooler budget.
+    max: Number(process.env.DB_POOL_MAX || 10),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 15000,
   };
@@ -146,6 +146,28 @@ function buildPoolConfig() {
   };
 }
 
+/**
+ * Runs one statement against `runner` (the pool or a single checked-out client) and reshapes
+ * the result into what mysql2's callers expect. Shared so a query issued inside an advisory
+ * lock behaves identically to one issued on the pool.
+ */
+async function runQuery(runner, text, params) {
+  const sql = withReturningId(toPositionalParams(text));
+  const result = await runner.query(sql, params);
+
+  // mysql2 resolves to [rows, fields]; SELECTs destructure element 0 as the row array and
+  // writes destructure it as the result object, so element 0 has to serve as both. The
+  // metadata is non-enumerable so `rows.map(...)`/JSON output are unaffected.
+  const rows = result.rows;
+  const isInsert = /^\s*insert\s/i.test(text);
+  Object.defineProperties(rows, {
+    insertId: { value: isInsert && rows.length ? rows[0].id : undefined },
+    affectedRows: { value: result.rowCount },
+    rowCount: { value: result.rowCount },
+  });
+  return [rows, result.fields];
+}
+
 function getConnection() {
   if (pool) return pool;
 
@@ -159,22 +181,7 @@ function getConnection() {
   });
 
   pool = {
-    async query(text, params = []) {
-      const sql = withReturningId(toPositionalParams(text));
-      const result = await rawPool.query(sql, params);
-
-      // mysql2 resolves to [rows, fields]; SELECTs destructure element 0 as the row array and
-      // writes destructure it as the result object, so element 0 has to serve as both. The
-      // metadata is non-enumerable so `rows.map(...)`/JSON output are unaffected.
-      const rows = result.rows;
-      const isInsert = /^\s*insert\s/i.test(text);
-      Object.defineProperties(rows, {
-        insertId: { value: isInsert && rows.length ? rows[0].id : undefined },
-        affectedRows: { value: result.rowCount },
-        rowCount: { value: result.rowCount },
-      });
-      return [rows, result.fields];
-    },
+    query: (text, params = []) => runQuery(rawPool, text, params),
     end: () => rawPool.end(),
     get pool() {
       return rawPool;
@@ -189,18 +196,26 @@ function getConnection() {
  * Postgres equivalent of MySQL's GET_LOCK/RELEASE_LOCK, used to serialise the lazy schema
  * setup and seed-data insertion that several endpoints trigger in parallel on first load.
  *
- * The lock is taken as a transaction-scoped advisory lock on a dedicated client: a session
- * lock would leak when the pool hands the next query to a different connection, and would
- * break outright behind Supabase's transaction pooler. `pg_advisory_xact_lock` is released
- * by COMMIT, so a thrown error can never strand it.
+ * The lock is transaction-scoped on a dedicated client: a session lock would leak when the
+ * pool hands the next query to a different connection, and would break outright behind
+ * Supabase's transaction pooler. `pg_advisory_xact_lock` is released by COMMIT, so a thrown
+ * error can never strand it.
+ *
+ * `fn` receives a `query` bound to that same client, and MUST use it rather than the pool.
+ * An earlier version let the callback reach for the pool instead, which deadlocked: each
+ * waiter held one of the pool's connections while needing a second one to do its work, so
+ * with enough concurrent callers every connection was held by something waiting for a
+ * connection, and requests died on connectionTimeoutMillis.
  */
 async function withAdvisoryLock(key, fn) {
   getConnection();
   const client = await rawPool.connect();
+  const query = (text, params = []) => runQuery(client, text, params);
+
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [key]);
-    return await fn();
+    return await fn(query);
   } finally {
     try {
       await client.query("COMMIT");
