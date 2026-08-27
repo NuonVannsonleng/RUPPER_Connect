@@ -8,8 +8,12 @@ export function RouteTransition({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // Start each page at the top - otherwise navigating from a long page (a full
-    // gradebook, say) drops you into the middle of the next one.
-    window.scrollTo({ top: 0, behavior: "auto" });
+    // gradebook, say) drops you into the middle of the next one. Signed-in routes scroll
+    // inside the app shell rather than the document, so reset that when it is present and
+    // fall back to the window for the public pages, which are not inside the shell.
+    const shell = document.getElementById("app-scroll");
+    if (shell) shell.scrollTo({ top: 0, behavior: "auto" });
+    else window.scrollTo({ top: 0, behavior: "auto" });
 
     // Nothing was navigated to on the very first paint, so don't flash the bar.
     if (isFirstRender.current) {

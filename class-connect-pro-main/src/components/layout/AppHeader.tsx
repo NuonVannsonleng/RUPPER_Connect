@@ -242,14 +242,12 @@ export function AppHeader() {
     );
   };
 
-  // Fully opaque, no blur. The previous attempt kept the translucency behind a
-  // supports-[backdrop-filter] query, but iOS Safari *does* advertise support and then fails
-  // to composite the blur in this stacking context - so the guard passed and the bar was
-  // still 20% see-through, with the page hero showing through it as it scrolled underneath.
-  // A frosted header is not worth a broken one; this is the only version that holds up
-  // everywhere.
+  // Not sticky: the shell in AppLayout is one viewport tall and `main` scrolls beneath this,
+  // so the bar simply never moves. Sticky was the thing that kept stranding it partway down
+  // the screen on iOS. Opaque for the same reason it was before - iOS Safari advertises
+  // backdrop-filter support and then fails to composite it here, leaving a see-through bar.
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background px-3 sm:gap-4 sm:px-6">
+    <header className="z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:gap-4 sm:px-6">
       <SidebarTrigger className="text-foreground" />
       <div className="hidden items-center gap-1 sm:flex">
         <Tooltip>
