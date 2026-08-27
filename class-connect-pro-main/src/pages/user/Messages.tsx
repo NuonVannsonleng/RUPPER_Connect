@@ -1,11 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Camera, ImagePlus, Loader2, MessagesSquare, Paperclip, Search, SendHorizonal, SquarePen, Users, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Camera,
+  ImagePlus,
+  Loader2,
+  MessagesSquare,
+  Paperclip,
+  Search,
+  SendHorizonal,
+  SquarePen,
+  Sticker,
+  Users,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { AttachmentBubble } from "@/components/chat/AttachmentBubble";
 import { CameraCaptureDialog } from "@/components/chat/CameraCaptureDialog";
-import { EmojiPickerButton, StickerPickerButton } from "@/components/chat/EmojiStickerPicker";
+import { EmojiPickerButton, StickerGrid } from "@/components/chat/EmojiStickerPicker";
 import { VoiceRecorder } from "@/components/chat/VoiceRecorder";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -13,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
@@ -75,6 +89,8 @@ export default function Messages() {
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [directorySearch, setDirectorySearch] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [lightbox, setLightbox] = useState<{ url: string; fileName?: string } | null>(null);
   // Chosen but not sent yet, so a photo can be captioned before it goes.
   const [pendingFile, setPendingFile] = useState<{ kind: "image" | "file"; file: File; previewUrl?: string } | null>(null);
@@ -84,6 +100,8 @@ export default function Messages() {
   const { data: thread, isLoading: threadLoading } = useChatThread(activeId);
 
   const totalUnread = conversations.reduce((sum, item) => sum + item.unreadCount, 0);
+  // Decides whether the right-hand button is Send or the mic.
+  const hasSomethingToSend = Boolean(draft.trim() || pendingFile);
 
   // Someone picked from the directory who you have never messaged has no conversation row
   // yet, so the header falls back to the contact record until the first message exists.
@@ -465,67 +483,109 @@ export default function Messages() {
                     </div>
                   )}
 
-                  <div className="flex items-end gap-1">
-                    <EmojiPickerButton onPick={(emoji) => setDraft((current) => current + emoji)} disabled={isSending} />
-                    <StickerPickerButton onSend={sendSticker} disabled={isSending} />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
-                      onClick={() => imageInputRef.current?.click()}
+                  {/* Six buttons in a row left the text box a squeezed sliver on a phone -
+                      "Message Nuon" wrapped onto two lines. Everything that attaches something
+                      now lives behind one paperclip, and the right-hand button is either the
+                      mic or Send depending on whether there is anything to send, which is how
+                      Telegram and WhatsApp handle the same problem. */}
+                  {isRecording ? (
+                    <VoiceRecorder
+                      onRecorded={(file, ms) => void sendVoice(file, ms)}
+                      onRecordingChange={setIsRecording}
                       disabled={isSending}
-                      aria-label="Attach a photo"
-                    >
-                      <ImagePlus className="h-5 w-5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
-                      onClick={() => setCameraOpen(true)}
-                      disabled={isSending}
-                      aria-label="Take a photo"
-                    >
-                      <Camera className="h-5 w-5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isSending}
-                      aria-label="Attach a file"
-                    >
-                      <Paperclip className="h-5 w-5" />
-                    </Button>
-                    <VoiceRecorder onRecorded={(file, ms) => void sendVoice(file, ms)} disabled={isSending} />
-
-                    <Textarea
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        // Enter sends, Shift+Enter breaks the line - what every chat app does.
-                        if (event.key === "Enter" && !event.shiftKey) {
-                          event.preventDefault();
-                          void send();
-                        }
-                      }}
-                      placeholder={`Message ${activeContact?.name ?? ""}...`}
-                      rows={1}
-                      className="max-h-32 min-h-[2.75rem] flex-1 resize-none py-3"
                     />
-                    <Button
-                      onClick={() => void send()}
-                      disabled={(!draft.trim() && !pendingFile) || isSending}
-                      className="h-11 w-11 shrink-0 rounded-full bg-gradient-primary p-0 text-primary-foreground"
-                      aria-label="Send message"
-                    >
-                      {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
-                    </Button>
-                  </div>
+                  ) : (
+                    <div className="flex items-end gap-1.5">
+                      <EmojiPickerButton
+                        onPick={(emoji) => setDraft((current) => current + emoji)}
+                        disabled={isSending}
+                      />
+
+                      <Popover open={attachMenuOpen} onOpenChange={setAttachMenuOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
+                            disabled={isSending}
+                            aria-label="Attach something"
+                          >
+                            <Paperclip className="h-5 w-5" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-56 p-1">
+                          {[
+                            { icon: ImagePlus, label: "Photo", onSelect: () => imageInputRef.current?.click() },
+                            { icon: Camera, label: "Take photo", onSelect: () => setCameraOpen(true) },
+                            { icon: Paperclip, label: "File", onSelect: () => fileInputRef.current?.click() },
+                          ].map(({ icon: Icon, label, onSelect }) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => {
+                                setAttachMenuOpen(false);
+                                onSelect();
+                              }}
+                              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-base hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <Icon className="h-4 w-4 text-muted-foreground" />
+                              {label}
+                            </button>
+                          ))}
+
+                          <div className="my-1 h-px bg-border" />
+                          <p className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            <span className="inline-flex items-center gap-1.5">
+                              <Sticker className="h-3 w-3" /> Stickers
+                            </span>
+                          </p>
+                          <StickerGrid
+                            onSend={(sticker) => {
+                              setAttachMenuOpen(false);
+                              sendSticker(sticker);
+                            }}
+                          />
+                        </PopoverContent>
+                      </Popover>
+
+                      <Textarea
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          // Enter sends, Shift+Enter breaks the line - what every chat app does.
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            void send();
+                          }
+                        }}
+                        placeholder="Message..."
+                        rows={1}
+                        className="max-h-32 min-h-[2.75rem] flex-1 resize-none rounded-2xl py-3"
+                      />
+
+                      {hasSomethingToSend ? (
+                        <Button
+                          onClick={() => void send()}
+                          disabled={isSending}
+                          className="h-11 w-11 shrink-0 rounded-full bg-gradient-primary p-0 text-primary-foreground"
+                          aria-label="Send message"
+                        >
+                          {isSending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <SendHorizonal className="h-4 w-4" />
+                          )}
+                        </Button>
+                      ) : (
+                        <VoiceRecorder
+                          onRecorded={(file, ms) => void sendVoice(file, ms)}
+                          onRecordingChange={setIsRecording}
+                          disabled={isSending}
+                        />
+                      )}
+                    </div>
+                  )}
 
                   <input
                     ref={imageInputRef}

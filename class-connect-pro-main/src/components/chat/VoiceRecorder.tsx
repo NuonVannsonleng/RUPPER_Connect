@@ -25,10 +25,12 @@ const extensionFor = (mimeType: string) => {
 interface VoiceRecorderProps {
   /** Called with the finished clip and how long it ran. */
   onRecorded: (file: File, durationMs: number) => void;
+  /** Lets the composer hand the whole row over to the recording bar while it runs. */
+  onRecordingChange?: (recording: boolean) => void;
   disabled?: boolean;
 }
 
-export function VoiceRecorder({ onRecorded, disabled }: VoiceRecorderProps) {
+export function VoiceRecorder({ onRecorded, onRecordingChange, disabled }: VoiceRecorderProps) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const startedAtRef = useRef(0);
@@ -38,6 +40,10 @@ export function VoiceRecorder({ onRecorded, disabled }: VoiceRecorderProps) {
 
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    onRecordingChange?.(recording);
+  }, [recording, onRecordingChange]);
 
   const cleanUp = () => {
     if (tickRef.current) window.clearInterval(tickRef.current);
@@ -138,7 +144,7 @@ export function VoiceRecorder({ onRecorded, disabled }: VoiceRecorderProps) {
   }
 
   return (
-    <div className="flex flex-1 items-center gap-2 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1.5">
+    <div className="flex w-full items-center gap-2 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-2">
       <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-destructive" />
       <span className="text-sm font-semibold tabular-nums text-foreground">{formatDuration(elapsed)}</span>
       <span className="truncate text-xs text-muted-foreground">Recording...</span>

@@ -74,7 +74,10 @@ export function ProfileMenu() {
         <button
           type="button"
           aria-label="Account menu"
-          className="flex items-center gap-2 rounded-full border border-border bg-card py-1 pl-1 pr-2 shadow-sm transition-base hover:border-primary/40 hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:gap-3 sm:pr-3"
+          // On a phone only the avatar shows, so the trigger has to be a circle around it - the
+          // old asymmetric pl-1 pr-2 left it a lopsided squircle with a visible box behind
+          // the round photo. Even padding here, and it grows into a pill once the name appears.
+          className="flex items-center gap-2 rounded-full border border-border bg-card p-1 shadow-sm transition-base hover:border-primary/40 hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:gap-3 sm:py-1 sm:pl-1 sm:pr-3"
         >
           <Avatar className="h-8 w-8">
             <AvatarImage src={account?.avatar} alt="" />

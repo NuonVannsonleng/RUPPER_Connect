@@ -242,12 +242,14 @@ export function AppHeader() {
     );
   };
 
-  // The bar is opaque unless the browser really supports backdrop-filter. With a bare
-  // bg-background/80 it was 20% see-through wherever the blur silently failed - most in-app
-  // browsers and older iOS Safari - so the page hero showed straight through the header as it
-  // scrolled underneath.
+  // Fully opaque, no blur. The previous attempt kept the translucency behind a
+  // supports-[backdrop-filter] query, but iOS Safari *does* advertise support and then fails
+  // to composite the blur in this stacking context - so the guard passed and the bar was
+  // still 20% see-through, with the page hero showing through it as it scrolled underneath.
+  // A frosted header is not worth a broken one; this is the only version that holds up
+  // everywhere.
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background px-3 supports-[backdrop-filter]:bg-background/80 supports-[backdrop-filter]:backdrop-blur-md sm:gap-4 sm:px-6">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background px-3 sm:gap-4 sm:px-6">
       <SidebarTrigger className="text-foreground" />
       <div className="hidden items-center gap-1 sm:flex">
         <Tooltip>
