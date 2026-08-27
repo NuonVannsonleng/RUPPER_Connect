@@ -459,7 +459,7 @@ export default function Messages() {
                 <div className="border-t border-border p-3">
                   {/* Chosen but not yet sent, so a photo can be captioned first. */}
                   {pendingFile && (
-                    <div className="mb-2 flex items-center gap-3 rounded-lg border border-border bg-secondary/40 p-2">
+                    <div className="mb-2 flex items-center gap-3 rounded-lg border border-border bg-secondary/40 p-2 animate-in fade-in slide-in-from-bottom-1 duration-200">
                       {pendingFile.previewUrl ? (
                         <img src={pendingFile.previewUrl} alt="" className="h-12 w-12 rounded object-cover" />
                       ) : (
@@ -489,11 +489,13 @@ export default function Messages() {
                       mic or Send depending on whether there is anything to send, which is how
                       Telegram and WhatsApp handle the same problem. */}
                   {isRecording ? (
-                    <VoiceRecorder
-                      onRecorded={(file, ms) => void sendVoice(file, ms)}
-                      onRecordingChange={setIsRecording}
-                      disabled={isSending}
-                    />
+                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-200">
+                      <VoiceRecorder
+                        onRecorded={(file, ms) => void sendVoice(file, ms)}
+                        onRecordingChange={setIsRecording}
+                        disabled={isSending}
+                      />
+                    </div>
                   ) : (
                     <div className="flex items-end gap-1.5">
                       <EmojiPickerButton
@@ -564,26 +566,50 @@ export default function Messages() {
                         className="max-h-32 min-h-[2.75rem] flex-1 resize-none rounded-2xl py-3"
                       />
 
-                      {hasSomethingToSend ? (
-                        <Button
-                          onClick={() => void send()}
-                          disabled={isSending}
-                          className="h-11 w-11 shrink-0 rounded-full bg-gradient-primary p-0 text-primary-foreground"
-                          aria-label="Send message"
+                      {/* Both are mounted and stacked in one slot so they can trade places
+                          rather than popping. Whichever is leaving spins and shrinks out while
+                          the other spins in from the opposite side; only transform and opacity
+                          move, so it stays on the compositor. The hidden one is taken out of
+                          the tab order and stops receiving clicks, which a plain opacity fade
+                          would not do. */}
+                      <div className="relative h-11 w-11 shrink-0">
+                        <div
+                          className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-out ${
+                            hasSomethingToSend
+                              ? "pointer-events-none rotate-90 scale-50 opacity-0"
+                              : "rotate-0 scale-100 opacity-100"
+                          }`}
+                          aria-hidden={hasSomethingToSend}
                         >
-                          {isSending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <SendHorizonal className="h-4 w-4" />
-                          )}
-                        </Button>
-                      ) : (
-                        <VoiceRecorder
-                          onRecorded={(file, ms) => void sendVoice(file, ms)}
-                          onRecordingChange={setIsRecording}
-                          disabled={isSending}
-                        />
-                      )}
+                          <VoiceRecorder
+                            onRecorded={(file, ms) => void sendVoice(file, ms)}
+                            onRecordingChange={setIsRecording}
+                            disabled={isSending || hasSomethingToSend}
+                          />
+                        </div>
+
+                        <div
+                          className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-out ${
+                            hasSomethingToSend
+                              ? "rotate-0 scale-100 opacity-100"
+                              : "pointer-events-none -rotate-90 scale-50 opacity-0"
+                          }`}
+                          aria-hidden={!hasSomethingToSend}
+                        >
+                          <Button
+                            onClick={() => void send()}
+                            disabled={isSending || !hasSomethingToSend}
+                            className="h-11 w-11 rounded-full bg-gradient-primary p-0 text-primary-foreground transition-transform duration-150 active:scale-90 disabled:opacity-100"
+                            aria-label="Send message"
+                          >
+                            {isSending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <SendHorizonal className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   )}
 
