@@ -1,4 +1,4 @@
-import { ChevronDown, LogOut, Settings as SettingsIcon, UserRound } from "lucide-react";
+import { ChevronDown, LogOut, Settings as SettingsIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -123,13 +123,12 @@ export function ProfileMenu() {
 
         <DropdownMenuSeparator className="my-0" />
         <div className="p-1">
-          <DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2">
-            <UserRound className="h-4 w-4" />
-            View and edit profile
-          </DropdownMenuItem>
+          {/* One entry, not two: /settings is a single page holding the profile fields,
+              appearance, email and password, so a separate "profile" item pointed at exactly
+              the same place. The name says both, since that is what the page covers. */}
           <DropdownMenuItem onSelect={() => navigate("/settings")} className="cursor-pointer gap-2">
             <SettingsIcon className="h-4 w-4" />
-            Settings
+            Profile &amp; settings
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
