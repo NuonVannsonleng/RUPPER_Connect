@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { GraduationCap, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { toast } from "sonner";
@@ -9,11 +9,14 @@ import { UniversityAuthShell } from "@/components/auth/UniversityAuthShell";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { OAuthProvider, useAuth, UserRole } from "@/context/AuthContext";
+import { warmUpApi } from "@/lib/warmup";
 
 export default function Signup() {
   const { signup, startOAuthLogin } = useAuth();
   const navigate = useNavigate();
   const [name, setName] = useState("");
+  // Same cold-start problem as the login screen - start the wake while they fill this in.
+  useEffect(() => warmUpApi(), []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("student");

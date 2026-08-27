@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { OAuthProvider, useAuth, UserRole } from "@/context/AuthContext";
+import { warmUpApi } from "@/lib/warmup";
 
 export default function Login() {
   const { login, startOAuthLogin } = useAuth();
@@ -24,6 +25,15 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
+  // The free backend sleeps and can take minutes to wake. Start it stirring as soon as this
+  // screen appears, so the wake overlaps with typing rather than beginning after submit.
+  useEffect(() => warmUpApi(), []);
+
+  // Signing in normally takes well under a second; if it hasn't, the server is waking up and
+  // the only honest thing to do is say so, because the request itself is fine and still running.
+  const [isSlow, setIsSlow] = useState(false);
+  const slowTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (slowTimer.current) window.clearTimeout(slowTimer.current); }, []);
 
   const handleSocialLogin = (provider: OAuthProvider, label: string) => {
     setActiveProvider(label);
@@ -33,8 +43,14 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setIsSlow(false);
+    slowTimer.current = window.setTimeout(() => setIsSlow(true), 4000);
+
     const { user: account, error } = await login(email, password, rememberMe);
+
+    if (slowTimer.current) window.clearTimeout(slowTimer.current);
     setIsSubmitting(false);
+    setIsSlow(false);
 
     if (account) {
       toast.success("Welcome back!");
@@ -125,6 +141,13 @@ export default function Login() {
         >
           {isSubmitting ? "Signing in..." : activeProvider ? `Opening ${activeProvider}...` : "Sign in"}
         </Button>
+
+        {isSlow && (
+          <p className="text-center text-xs leading-5 text-slate-500 dark:text-slate-400" role="status">
+            Waking the server up - this can take a couple of minutes on the free plan after a
+            quiet spell. Please keep this page open; you'll be signed in automatically.
+          </p>
+        )}
       </form>
 
       <div className="my-6 flex items-center gap-3">
