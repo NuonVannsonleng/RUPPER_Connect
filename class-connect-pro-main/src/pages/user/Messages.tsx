@@ -19,6 +19,8 @@ import {
   useChatThread,
   useConversations,
   type AcademicContact,
+  type ChatMessage,
+  type ChatThread,
   type DirectoryRole,
 } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
@@ -103,18 +105,38 @@ export default function Messages() {
     const body = draft.trim();
     if (!body || !activeId) return;
 
+    const threadKey = academicThreadQueryKey(activeId);
+    // Show it in the thread straight away rather than after the round trip. On a warm server
+    // that saves a few hundred milliseconds; on a cold one it is the difference between a
+    // chat and a form. The refetch below replaces this with the row the server actually
+    // stored, so the temporary id never outlives the request.
+    const pending: ChatMessage = {
+      id: `pending-${Date.now()}`,
+      body,
+      sentAt: new Date().toISOString(),
+      fromMe: true,
+    };
+    queryClient.setQueryData<ChatThread>(threadKey, (current) =>
+      current ? { ...current, messages: [...current.messages, pending] } : current
+    );
+
+    setDraft("");
     setIsSending(true);
     try {
       await apiRequest<{ message: string }>("/academic/messages", {
         method: "POST",
         body: JSON.stringify({ receiverId: activeId, body }),
       });
-      setDraft("");
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: academicThreadQueryKey(activeId) }),
+        queryClient.invalidateQueries({ queryKey: threadKey }),
         queryClient.invalidateQueries({ queryKey: ACADEMIC_CONVERSATIONS_QUERY_KEY }),
       ]);
     } catch (error) {
+      // Put the text back in the box so it isn't lost, and drop the optimistic bubble.
+      setDraft(body);
+      queryClient.setQueryData<ChatThread>(threadKey, (current) =>
+        current ? { ...current, messages: current.messages.filter((item) => item.id !== pending.id) } : current
+      );
       toast.error(error instanceof Error ? error.message : "Could not send that message");
     } finally {
       setIsSending(false);

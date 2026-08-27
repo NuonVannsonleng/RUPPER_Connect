@@ -177,24 +177,46 @@ export function useAcademicRiskAlerts() {
 
 /**
  * Polling stands in for a socket here. The backend is a plain REST service on a free
- * instance, so a WebSocket would need infrastructure this app does not have; refetching
- * while the tab is open is enough to make a reply show up on its own.
+ * instance, so a WebSocket would need infrastructure this app does not have.
+ *
+ * Three defaults have to be overridden for a chat, and all three were why a reply only
+ * appeared after navigating away and back:
+ *
+ *  - refetchIntervalInBackground is false by default, so the interval stops the moment the
+ *    tab loses focus. Testing two accounts in two windows means the one you are not looking
+ *    at never polls at all.
+ *  - the app-wide staleTime of 30s applies to focus refetches too, so even clicking back
+ *    into the tab did nothing for the first half minute.
+ *  - the interval itself was too slow to read as live.
+ *
+ * Only a full navigation remounted the query and forced a fetch, which is the behaviour that
+ * got reported.
  */
+const CHAT_QUERY_OPTIONS = {
+  staleTime: 0,
+  refetchIntervalInBackground: true,
+  refetchOnWindowFocus: true,
+  refetchOnMount: true,
+} as const;
+
 export function useConversations() {
   return useQuery({
+    ...CHAT_QUERY_OPTIONS,
     queryKey: ACADEMIC_CONVERSATIONS_QUERY_KEY,
     queryFn: () => apiRequest<Conversation[]>("/academic/messages/conversations"),
     initialData: [],
-    refetchInterval: 15000,
+    refetchInterval: 6000,
   });
 }
 
 export function useChatThread(userId: string | null) {
   return useQuery({
+    ...CHAT_QUERY_OPTIONS,
     queryKey: academicThreadQueryKey(userId ?? "none"),
     queryFn: () => apiRequest<ChatThread>(`/academic/messages/thread/${userId}`),
     enabled: Boolean(userId),
-    refetchInterval: 8000,
+    // The open conversation is what someone is actually watching, so it polls fastest.
+    refetchInterval: 3000,
   });
 }
 
