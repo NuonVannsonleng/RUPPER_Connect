@@ -86,23 +86,34 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      {/* Collapse styling is driven by the sidebar's own data-collapsible attribute rather
-          than React state, so the logo and wordmark ease out in lockstep with the 200ms
-          width animation instead of popping the moment the state flips. */}
-      <SidebarHeader className="overflow-hidden border-b border-sidebar-border px-4 py-5 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:px-0">
+      {/* Collapsing used to run four layout animations against each other - the rail's width,
+          this padding, the link's gap, and a max-width on the wordmark - while justify-center
+          flipped instantly, teleporting the logo the moment the state changed. The logo also
+          scaled via transform, which re-samples a 250px image into 32px on every frame.
+
+          Now the rail's width is the only thing that moves the layout. The logo is a fixed
+          size and never transforms, and the wordmark keeps its natural width and is simply
+          clipped by the overflow-hidden above as the rail narrows past it, fading on opacity
+          alone. Padding is the one remaining box change, and it exists to keep the logo lined
+          up with the nav icons in both states: 16px in (px-4) matches SidebarContent's px-2
+          plus the button's p-2, and 8px in (px-2) matches the mx-auto icons on the 48px rail. */}
+      <SidebarHeader className="overflow-hidden border-b border-sidebar-border px-4 py-5 transition-[padding] duration-200 ease-in-out group-data-[collapsible=icon]:px-2">
         <Link
           to={home}
           aria-label="RUPPER Connect - go to dashboard"
-          className="flex items-center gap-3 rounded-xl outline-none transition-[gap,opacity] duration-200 ease-linear hover:opacity-90 focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
+          className="flex items-center gap-3 rounded-xl outline-none transition-opacity duration-200 ease-in-out hover:opacity-90 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
         >
-          {/* Scaled rather than resized: transform keeps this off the layout path, and
-              0.8 x 40px lands on 32px so the logo lines up exactly with the nav icons. */}
           <img
             src={schoolLogo}
             alt=""
-            className="h-10 w-10 shrink-0 rounded-full bg-white object-contain p-0.5 shadow-soft transition-transform duration-200 ease-linear group-data-[collapsible=icon]:scale-[0.8]"
+            width={32}
+            height={32}
+            decoding="async"
+            className="h-8 w-8 shrink-0 rounded-full bg-white object-contain p-0.5 shadow-soft"
           />
-          <span className="flex min-w-0 max-w-[10rem] flex-col overflow-hidden whitespace-nowrap leading-tight transition-[max-width,opacity] duration-200 ease-linear group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:opacity-0">
+          {/* shrink-0 is what keeps this out of the animation: the wordmark holds its natural
+              width and is clipped by the header, rather than reflowing every frame. */}
+          <span className="flex shrink-0 flex-col whitespace-nowrap leading-tight transition-opacity duration-200 ease-in-out group-data-[collapsible=icon]:opacity-0">
             <span className="font-display text-base font-bold text-sidebar-foreground">
               RUPPER
             </span>
