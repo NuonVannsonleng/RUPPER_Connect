@@ -3,6 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Without these, iOS Safari tints its toolbar by sampling the page, and it picked up
+         the red page hero - so the browser chrome above the app header rendered a
+         mismatched red band. Pinning it to the app background (--background, in both
+         schemes) makes the chrome continue the page instead of fighting it. -->
+    <meta name="theme-color" content="#f5f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0e1c" media="(prefers-color-scheme: dark)" />
     <title>RUPPER CONNECT — Classroom Management Platform</title>
     <meta name="description" content="Modern classroom management for teachers and students: attendance, gradebook, schedule and announcements in one place." />
     <meta name="author" content="RUPPER CONNECT" />

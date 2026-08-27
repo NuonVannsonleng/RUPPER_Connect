@@ -17,7 +17,9 @@ export default function AppLayout() {
 
         <div className="flex flex-1 flex-col">
           <AppHeader />
-          <main className="flex-1 overflow-hidden p-4 sm:p-6 lg:p-8">
+          {/* overflow-x only: clipping the vertical axis too made this a scroll container,
+              which silently disables position:sticky for anything inside a page. */}
+          <main className="min-w-0 flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
             <div key={location.pathname} className="animate-page-switch">
               <Outlet />
             </div>

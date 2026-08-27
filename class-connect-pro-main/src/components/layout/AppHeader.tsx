@@ -15,7 +15,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -27,6 +26,7 @@ import { ANNOUNCEMENTS_QUERY_KEY, useAnnouncements } from "@/hooks/useAnnounceme
 import { NOTIFICATION_READS_QUERY_KEY, useNotificationReads } from "@/hooks/useNotificationReads";
 import { apiRequest } from "@/lib/api";
 import { GlobalSearch } from "./GlobalSearch";
+import { ProfileMenu } from "./ProfileMenu";
 
 const ANNOUNCEMENT_ID_PREFIX = "announcement-";
 
@@ -136,8 +136,8 @@ const buildNotifications = (role: string, announcementItems: Announcement[]): No
 };
 
 export function AppHeader() {
-  const { role, user } = useRole();
-  const { logout, user: authUser } = useAuth();
+  const { role } = useRole();
+  const { logout } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: announcementItems = [] } = useAnnouncements();
@@ -242,8 +242,12 @@ export function AppHeader() {
     );
   };
 
+  // The bar is opaque unless the browser really supports backdrop-filter. With a bare
+  // bg-background/80 it was 20% see-through wherever the blur silently failed - most in-app
+  // browsers and older iOS Safari - so the page hero showed straight through the header as it
+  // scrolled underneath.
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background/80 px-3 backdrop-blur-md sm:gap-4 sm:px-6">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background px-3 supports-[backdrop-filter]:bg-background/80 supports-[backdrop-filter]:backdrop-blur-md sm:gap-4 sm:px-6">
       <SidebarTrigger className="text-foreground" />
       <div className="hidden items-center gap-1 sm:flex">
         <Tooltip>
@@ -380,33 +384,19 @@ export function AppHeader() {
           </PopoverContent>
         </Popover>
 
+        {/* Hidden on phones, where the bar has no room to spare - the profile menu carries
+            Log out on every screen size. */}
         <Button
           variant="ghost"
           size="icon"
-          className="h-10 w-10 rounded-full"
+          className="hidden h-10 w-10 rounded-full sm:inline-flex"
           onClick={() => { logout(); navigate("/login"); }}
           aria-label="Log out"
         >
           <LogOut className="h-5 w-5" />
         </Button>
 
-
-        <div className="flex items-center gap-3 rounded-full border border-border bg-card py-1 pl-1 pr-3 shadow-sm">
-          <Avatar className="h-8 w-8">
-            <AvatarImage src={authUser?.avatar} alt={user.name} />
-            <AvatarFallback className="bg-gradient-primary text-xs font-bold text-primary-foreground">
-              {user.name
-                .split(" ")
-                .map((n) => n[0])
-                .slice(0, 2)
-                .join("")}
-            </AvatarFallback>
-          </Avatar>
-          <div className="hidden text-left leading-tight sm:block">
-            <p className="text-xs font-semibold text-foreground">{user.name}</p>
-            <p className="text-[10px] text-muted-foreground">{user.subtitle}</p>
-          </div>
-        </div>
+        <ProfileMenu />
       </div>
     </header>
   );
