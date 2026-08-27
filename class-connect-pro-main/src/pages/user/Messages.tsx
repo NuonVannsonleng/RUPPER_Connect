@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Loader2, MessagesSquare, Search, SendHorizonal, SquarePen, Users } from "lucide-react";
+import { ArrowLeft, Camera, ImagePlus, Loader2, MessagesSquare, Paperclip, Search, SendHorizonal, SquarePen, Users, X } from "lucide-react";
 import { toast } from "sonner";
 
+import { AttachmentBubble } from "@/components/chat/AttachmentBubble";
+import { CameraCaptureDialog } from "@/components/chat/CameraCaptureDialog";
+import { EmojiPickerButton, StickerPickerButton } from "@/components/chat/EmojiStickerPicker";
+import { VoiceRecorder } from "@/components/chat/VoiceRecorder";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -19,12 +23,19 @@ import {
   useChatThread,
   useConversations,
   type AcademicContact,
+  type ChatAttachment,
   type ChatMessage,
   type ChatThread,
   type DirectoryRole,
 } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
 import { clockTime, conversationTime, dayLabel, isNewDay } from "@/lib/chatTime";
+import {
+  ACCEPT_ATTRIBUTE,
+  fileToBase64,
+  formatBytes,
+  validateAttachment,
+} from "@/lib/messageAttachments";
 
 const ROLE_TONE: Record<DirectoryRole, string> = {
   admin: "border-primary/30 bg-primary/10 text-primary",
@@ -63,6 +74,12 @@ export default function Messages() {
   const [search, setSearch] = useState("");
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [directorySearch, setDirectorySearch] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [lightbox, setLightbox] = useState<{ url: string; fileName?: string } | null>(null);
+  // Chosen but not sent yet, so a photo can be captioned before it goes.
+  const [pendingFile, setPendingFile] = useState<{ kind: "image" | "file"; file: File; previewUrl?: string } | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: thread, isLoading: threadLoading } = useChatThread(activeId);
 
@@ -101,45 +118,119 @@ export default function Messages() {
     setDraft("");
   };
 
-  const send = async () => {
-    const body = draft.trim();
-    if (!body || !activeId) return;
+  /**
+   * One path for everything the composer can produce. `attachment` carries the file half of
+   * the request when there is one; text-only sends leave it undefined.
+   */
+  const deliver = async (options: {
+    body?: string;
+    attachment?: { kind: "image" | "file" | "voice" | "sticker"; file?: File; sticker?: string; durationMs?: number };
+    optimistic: ChatAttachment | undefined;
+  }) => {
+    if (!activeId) return;
 
     const threadKey = academicThreadQueryKey(activeId);
-    // Show it in the thread straight away rather than after the round trip. On a warm server
-    // that saves a few hundred milliseconds; on a cold one it is the difference between a
-    // chat and a form. The refetch below replaces this with the row the server actually
-    // stored, so the temporary id never outlives the request.
     const pending: ChatMessage = {
       id: `pending-${Date.now()}`,
-      body,
+      body: options.body?.trim() || null,
       sentAt: new Date().toISOString(),
       fromMe: true,
+      attachment: options.optimistic,
     };
     queryClient.setQueryData<ChatThread>(threadKey, (current) =>
       current ? { ...current, messages: [...current.messages, pending] } : current
     );
 
-    setDraft("");
     setIsSending(true);
     try {
+      const payload: Record<string, unknown> = { receiverId: activeId };
+      if (options.body?.trim()) payload.body = options.body.trim();
+
+      if (options.attachment) {
+        const { kind, file, sticker, durationMs } = options.attachment;
+        payload.attachment =
+          kind === "sticker"
+            ? { kind, sticker }
+            : { kind, fileName: file!.name, fileData: await fileToBase64(file!), durationMs };
+      }
+
       await apiRequest<{ message: string }>("/academic/messages", {
         method: "POST",
-        body: JSON.stringify({ receiverId: activeId, body }),
+        body: JSON.stringify(payload),
       });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: threadKey }),
         queryClient.invalidateQueries({ queryKey: ACADEMIC_CONVERSATIONS_QUERY_KEY }),
       ]);
+      return true;
     } catch (error) {
-      // Put the text back in the box so it isn't lost, and drop the optimistic bubble.
-      setDraft(body);
       queryClient.setQueryData<ChatThread>(threadKey, (current) =>
         current ? { ...current, messages: current.messages.filter((item) => item.id !== pending.id) } : current
       );
       toast.error(error instanceof Error ? error.message : "Could not send that message");
+      return false;
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const chooseAttachment = (kind: "image" | "file", file: File | null | undefined) => {
+    if (!file) return;
+    const problem = validateAttachment(kind, file);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+    if (pendingFile?.previewUrl) URL.revokeObjectURL(pendingFile.previewUrl);
+    setPendingFile({
+      kind,
+      file,
+      previewUrl: kind === "image" ? URL.createObjectURL(file) : undefined,
+    });
+  };
+
+  const clearPendingFile = () => {
+    if (pendingFile?.previewUrl) URL.revokeObjectURL(pendingFile.previewUrl);
+    setPendingFile(null);
+  };
+
+  const sendSticker = (sticker: string) =>
+    void deliver({ attachment: { kind: "sticker", sticker }, optimistic: { kind: "sticker" } });
+
+  const sendVoice = async (file: File, durationMs: number) => {
+    const problem = validateAttachment("voice", file);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+    await deliver({
+      attachment: { kind: "voice", file, durationMs },
+      optimistic: { kind: "voice", fileName: file.name, fileSize: file.size, durationMs },
+    });
+  };
+
+  /** The composer's send button: text, an attached file, or both together. */
+  const send = async () => {
+    const body = draft.trim();
+    if ((!body && !pendingFile) || !activeId) return;
+
+    const attached = pendingFile;
+    const previousDraft = draft;
+    // Clear the box first so it feels immediate; both are restored if the send fails.
+    setDraft("");
+    clearPendingFile();
+
+    const ok = await deliver({
+      body,
+      attachment: attached ? { kind: attached.kind, file: attached.file } : undefined,
+      optimistic: attached
+        ? { kind: attached.kind, fileName: attached.file.name, fileSize: attached.file.size }
+        : undefined,
+    });
+
+    if (!ok) {
+      setDraft(previousDraft);
+      if (attached) setPendingFile(attached);
     }
   };
 
@@ -299,25 +390,46 @@ export default function Messages() {
                             </div>
                           )}
                           <div className={`flex ${message.fromMe ? "justify-end" : "justify-start"}`}>
-                            <div
-                              className={`max-w-[85%] rounded-2xl px-3.5 py-2 sm:max-w-[70%] ${
-                                message.fromMe
-                                  ? "rounded-br-sm bg-primary text-primary-foreground"
-                                  // A border, not just a fill: the thread sits on a tinted card,
-                                  // so a bare bg-card bubble was the same shade as the panel
-                                  // behind it and had no edge at all.
-                                  : "rounded-bl-sm border border-border bg-card text-foreground shadow-soft"
-                              }`}
-                            >
-                              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.body}</p>
-                              <p
-                                className={`mt-1 text-right text-[10px] tabular-nums ${
-                                  message.fromMe ? "text-primary-foreground/70" : "text-muted-foreground"
+                            {message.attachment?.kind === "sticker" ? (
+                              // A sticker is the message: no bubble around it, just the glyph.
+                              <div className="flex flex-col items-end">
+                                <span className="text-5xl leading-none">{message.body}</span>
+                                <span className="mt-1 text-[10px] tabular-nums text-muted-foreground">
+                                  {clockTime(message.sentAt)}
+                                </span>
+                              </div>
+                            ) : (
+                              <div
+                                className={`max-w-[85%] rounded-2xl px-3.5 py-2 sm:max-w-[70%] ${
+                                  message.fromMe
+                                    ? "rounded-br-sm bg-primary text-primary-foreground"
+                                    // A border, not just a fill: the thread sits on a tinted card,
+                                    // so a bare bg-card bubble was the same shade as the panel
+                                    // behind it and had no edge at all.
+                                    : "rounded-bl-sm border border-border bg-card text-foreground shadow-soft"
                                 }`}
                               >
-                                {clockTime(message.sentAt)}
-                              </p>
-                            </div>
+                                {message.attachment && (
+                                  <span className="mb-1 block">
+                                    <AttachmentBubble
+                                      attachment={message.attachment}
+                                      fromMe={message.fromMe}
+                                      onOpenImage={(url, fileName) => setLightbox({ url, fileName })}
+                                    />
+                                  </span>
+                                )}
+                                {message.body && (
+                                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.body}</p>
+                                )}
+                                <p
+                                  className={`mt-1 text-right text-[10px] tabular-nums ${
+                                    message.fromMe ? "text-primary-foreground/70" : "text-muted-foreground"
+                                  }`}
+                                >
+                                  {clockTime(message.sentAt)}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))
@@ -327,7 +439,70 @@ export default function Messages() {
                 </ScrollArea>
 
                 <div className="border-t border-border p-3">
-                  <div className="flex items-end gap-2">
+                  {/* Chosen but not yet sent, so a photo can be captioned first. */}
+                  {pendingFile && (
+                    <div className="mb-2 flex items-center gap-3 rounded-lg border border-border bg-secondary/40 p-2">
+                      {pendingFile.previewUrl ? (
+                        <img src={pendingFile.previewUrl} alt="" className="h-12 w-12 rounded object-cover" />
+                      ) : (
+                        <span className="flex h-12 w-12 items-center justify-center rounded bg-secondary">
+                          <Paperclip className="h-4 w-4 text-muted-foreground" />
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-foreground">{pendingFile.file.name}</span>
+                        <span className="block text-xs text-muted-foreground">{formatBytes(pendingFile.file.size)}</span>
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        onClick={clearPendingFile}
+                        aria-label="Remove attachment"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="flex items-end gap-1">
+                    <EmojiPickerButton onPick={(emoji) => setDraft((current) => current + emoji)} disabled={isSending} />
+                    <StickerPickerButton onSend={sendSticker} disabled={isSending} />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => imageInputRef.current?.click()}
+                      disabled={isSending}
+                      aria-label="Attach a photo"
+                    >
+                      <ImagePlus className="h-5 w-5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => setCameraOpen(true)}
+                      disabled={isSending}
+                      aria-label="Take a photo"
+                    >
+                      <Camera className="h-5 w-5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isSending}
+                      aria-label="Attach a file"
+                    >
+                      <Paperclip className="h-5 w-5" />
+                    </Button>
+                    <VoiceRecorder onRecorded={(file, ms) => void sendVoice(file, ms)} disabled={isSending} />
+
                     <Textarea
                       value={draft}
                       onChange={(event) => setDraft(event.target.value)}
@@ -344,19 +519,59 @@ export default function Messages() {
                     />
                     <Button
                       onClick={() => void send()}
-                      disabled={!draft.trim() || isSending}
+                      disabled={(!draft.trim() && !pendingFile) || isSending}
                       className="h-11 w-11 shrink-0 rounded-full bg-gradient-primary p-0 text-primary-foreground"
                       aria-label="Send message"
                     >
                       {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
                     </Button>
                   </div>
+
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept={ACCEPT_ATTRIBUTE.image}
+                    className="hidden"
+                    onChange={(event) => {
+                      chooseAttachment("image", event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ACCEPT_ATTRIBUTE.file}
+                    className="hidden"
+                    onChange={(event) => {
+                      chooseAttachment("file", event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
                 </div>
               </>
             )}
           </section>
         </div>
       </Card>
+
+      <CameraCaptureDialog
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={(file) => chooseAttachment("image", file)}
+      />
+
+      {/* Full-size view of a photo already in the thread. The URL is the object URL the
+          bubble built, so no second fetch and nothing to revoke here. */}
+      <Dialog open={Boolean(lightbox)} onOpenChange={(next) => !next && setLightbox(null)}>
+        <DialogContent className="max-w-3xl p-2">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{lightbox?.fileName || "Photo"}</DialogTitle>
+          </DialogHeader>
+          {lightbox && (
+            <img src={lightbox.url} alt={lightbox.fileName || "Photo"} className="max-h-[80vh] w-full object-contain" />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ---------------- people directory ---------------- */}
       <Dialog open={directoryOpen} onOpenChange={setDirectoryOpen}>

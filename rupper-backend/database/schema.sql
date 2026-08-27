@@ -244,8 +244,16 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   subject VARCHAR(180),
-  body TEXT NOT NULL,
+  -- Nullable: a photo or voice note sent without a caption has no text.
+  body TEXT,
   is_read BOOLEAN DEFAULT FALSE,
+  -- Chat attachments: one per message ('image', 'file', 'voice', 'sticker').
+  attachment_kind VARCHAR(12),
+  file_name VARCHAR(255),
+  file_mime VARCHAR(150),
+  file_data BYTEA,
+  file_size INTEGER,
+  duration_ms INTEGER,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

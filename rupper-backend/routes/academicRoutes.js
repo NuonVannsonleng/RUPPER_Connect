@@ -43,6 +43,7 @@ router.get("/messages/conversations", auth, asyncHandler(c.getConversations));
 // Placed after /conversations so that literal path is not captured as a :userId.
 router.get("/messages/thread/:userId", auth, asyncHandler(c.getThread));
 router.post("/messages", auth, asyncHandler(c.createMessage));
+router.get("/messages/:id/attachment", auth, asyncHandler(c.downloadMessageAttachment));
 router.put("/messages/:id/read", auth, asyncHandler(c.markMessageRead));
 
 router.post("/attendance-sessions", auth, requireTeacher, asyncHandler(c.createAttendanceSession));

@@ -53,11 +53,22 @@ export interface Conversation {
   unreadCount: number;
 }
 
+export interface ChatAttachment {
+  kind: "image" | "file" | "voice" | "sticker";
+  fileName?: string;
+  fileSize?: number;
+  durationMs?: number;
+  /** Absent for stickers, which have no file behind them. */
+  url?: string;
+}
+
 export interface ChatMessage {
   id: string;
-  body: string;
+  /** Null when a photo, file, or voice note was sent with no caption. */
+  body: string | null;
   sentAt: string;
   fromMe: boolean;
+  attachment?: ChatAttachment;
 }
 
 export interface ChatThread {

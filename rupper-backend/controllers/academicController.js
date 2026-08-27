@@ -272,6 +272,19 @@ const ensureAcademicSchemaLocked = async (query) => {
     `CREATE INDEX IF NOT EXISTS idx_transcripts_student ON transcript_records (student_id)`,
     `CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id)`,
     `CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages (receiver_id)`,
+    // Chat attachments. One per message is enough for what this sends - a photo, a file, a
+    // voice note - so they live on the row rather than in a join table. Stored as BYTEA
+    // alongside course materials and submissions, which is the pattern already in use here.
+    // A photo or a voice note sent without a caption has no text at all, and body was
+    // declared NOT NULL back when every message was text.
+    `ALTER TABLE messages ALTER COLUMN body DROP NOT NULL`,
+    `ALTER TABLE messages
+       ADD COLUMN IF NOT EXISTS attachment_kind VARCHAR(12),
+       ADD COLUMN IF NOT EXISTS file_name VARCHAR(255),
+       ADD COLUMN IF NOT EXISTS file_mime VARCHAR(150),
+       ADD COLUMN IF NOT EXISTS file_data BYTEA,
+       ADD COLUMN IF NOT EXISTS file_size INTEGER,
+       ADD COLUMN IF NOT EXISTS duration_ms INTEGER`,
     `CREATE INDEX IF NOT EXISTS idx_courses_lecturer ON courses (lecturer_id)`,
     `CREATE INDEX IF NOT EXISTS idx_users_role ON users (role)`,
   ];
@@ -678,8 +691,19 @@ const mimeForFileName = (fileName) => mimeForExtension(String(fileName || "").sp
  * a CR or LF in a stored name would otherwise either split the response or (on current Node)
  * throw and turn a download into a 500.
  */
+/**
+ * Strips quotes and control characters out of a stored filename before it reaches a
+ * Content-Disposition header - a CR or LF in a name would otherwise either split the
+ * response or throw and turn a download into a 500.
+ */
+const safeFileName = (fileName) =>
+  String(fileName || "")
+    .replace(/["\\]/g, "")
+    .replace(/[\r\n\t\x00-\x1f\x7f]/g, " ")
+    .trim() || "download";
+
 const sendStoredFile = (res, fileName, data) => {
-  const safeName = String(fileName).replace(/["\\]/g, "").replace(/[\r\n\t\x00-\x1f\x7f]/g, " ").trim() || "download";
+  const safeName = safeFileName(fileName);
   res.setHeader("Content-Type", mimeForFileName(fileName));
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
@@ -1683,6 +1707,120 @@ exports.getRiskAlerts = async (req, res) => {
   res.json(alerts);
 };
 
+/* ------------------------------------------------------------------------------------- *
+ * Chat attachments
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * Voice notes get their own table because the browser records WebM, and `webm` already maps
+ * to video/webm above. Serving a voice note as video makes it play in a video element with a
+ * black rectangle instead of an audio player.
+ */
+const AUDIO_MIME_BY_EXTENSION = {
+  webm: "audio/webm",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  m4a: "audio/mp4",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+};
+
+// Per-kind allow-lists and ceilings. Everything lands in the database, and the free Supabase
+// tier holds 500MB in total, so these are deliberately tighter than the assignment limits.
+const ATTACHMENT_RULES = {
+  image: { extensions: new Set(["png", "jpg", "jpeg", "gif", "webp"]), maxBytes: 5 * 1024 * 1024 },
+  voice: { extensions: new Set(Object.keys(AUDIO_MIME_BY_EXTENSION)), maxBytes: 5 * 1024 * 1024 },
+  file: {
+    extensions: new Set([
+      "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "csv",
+      "zip", "rar", "7z", "png", "jpg", "jpeg", "gif", "webp",
+    ]),
+    maxBytes: 10 * 1024 * 1024,
+  },
+};
+
+const ATTACHMENT_KINDS = new Set([...Object.keys(ATTACHMENT_RULES), "sticker"]);
+
+const mimeForAttachment = (kind, fileName) => {
+  const extension = String(fileName || "").split(".").pop()?.toLowerCase();
+  if (kind === "voice") return AUDIO_MIME_BY_EXTENSION[extension] || "audio/webm";
+  return mimeForExtension(extension);
+};
+
+/**
+ * Turns the attachment half of a send request into columns, or into a message explaining why
+ * it was refused. The content type is derived from the extension, never taken from the
+ * client - the same rule the rest of this file follows, and for the same reason.
+ */
+const readAttachment = (raw) => {
+  if (!raw) return { columns: null };
+
+  const kind = String(raw.kind || "");
+  if (!ATTACHMENT_KINDS.has(kind)) return { error: "That kind of attachment isn't supported" };
+
+  // A sticker is just a character sent large - there is no file behind it.
+  if (kind === "sticker") {
+    const sticker = String(raw.sticker || "").trim();
+    // A handful of characters: an emoji can be several code points once modifiers and
+    // zero-width joiners are counted, but nothing legitimate is longer than this.
+    if (!sticker || Array.from(sticker).length > 8) return { error: "That isn't a valid sticker" };
+    return { columns: { kind, body: sticker, fileName: null, mime: null, buffer: null, size: null, durationMs: null } };
+  }
+
+  const rules = ATTACHMENT_RULES[kind];
+  const fileName = String(raw.fileName || "").trim();
+  const extension = fileName.split(".").pop()?.toLowerCase();
+  if (!extension || !rules.extensions.has(extension)) {
+    return { error: `That file type can't be sent as ${kind === "image" ? "a photo" : `a ${kind}`}` };
+  }
+  if (!raw.fileData) return { error: "That attachment was empty" };
+
+  let buffer;
+  try {
+    buffer = Buffer.from(String(raw.fileData), "base64");
+  } catch {
+    return { error: "That attachment could not be read" };
+  }
+  if (!buffer.length) return { error: "That attachment was empty" };
+  if (buffer.length > rules.maxBytes) {
+    return { error: `Too large. The limit for ${kind === "image" ? "photos" : `${kind}s`} is ${Math.round(rules.maxBytes / (1024 * 1024))}MB.` };
+  }
+
+  const durationMs = Number(raw.durationMs);
+  return {
+    columns: {
+      kind,
+      body: null,
+      fileName,
+      mime: mimeForAttachment(kind, fileName),
+      buffer,
+      size: buffer.length,
+      durationMs: kind === "voice" && Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : null,
+    },
+  };
+};
+
+/** The attachment metadata a chat bubble needs - never the bytes, which are fetched on demand. */
+const attachmentOf = (row) =>
+  row.attachment_kind
+    ? {
+        kind: row.attachment_kind,
+        fileName: row.file_name || undefined,
+        fileSize: row.file_size || undefined,
+        durationMs: row.duration_ms || undefined,
+        url: row.attachment_kind === "sticker" ? undefined : `/academic/messages/${row.id}/attachment`,
+      }
+    : undefined;
+
+/** One line describing a message in the conversation list, where an image has no text. */
+const previewOf = (row) => {
+  if (row.attachment_kind === "image") return "Photo";
+  if (row.attachment_kind === "voice") return "Voice message";
+  if (row.attachment_kind === "file") return row.file_name || "Attachment";
+  if (row.attachment_kind === "sticker") return row.body || "Sticker";
+  return row.body;
+};
+
 exports.getContacts = async (req, res) => {
   // Everyone on the platform except yourself and deactivated accounts. This used to return
   // only the opposite role, which meant an admin could never message a teacher and two
@@ -1717,10 +1855,11 @@ exports.getConversations = async (req, res) => {
   const [threads] = await pool.query(
     `SELECT DISTINCT ON (t.partner)
        t.partner, t.body, t.created_at AS "lastAt", t.sender_id AS "lastSenderId",
+       t.attachment_kind, t.file_name, t.id,
        u.name, u.role, u.avatar
      FROM (
        SELECT CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS partner,
-              id, body, created_at, sender_id
+              id, body, created_at, sender_id, attachment_kind, file_name
        FROM messages
        WHERE sender_id = ? OR receiver_id = ?
      ) t
@@ -1745,7 +1884,7 @@ exports.getConversations = async (req, res) => {
         name: row.name,
         role: row.role,
         avatar: row.avatar || "",
-        lastMessage: row.body,
+        lastMessage: previewOf(row),
         lastAt: row.lastAt,
         lastFromMe: Number(row.lastSenderId) === Number(req.user.id),
         unreadCount: unreadByPartner.get(Number(row.partner)) || 0,
@@ -1771,7 +1910,8 @@ exports.getThread = async (req, res) => {
   if (!people.length) return res.status(404).json({ message: "That account no longer exists" });
 
   const [rows] = await pool.query(
-    `SELECT id, sender_id, body, created_at, is_read
+    `SELECT id, sender_id, body, created_at, is_read,
+            attachment_kind, file_name, file_size, duration_ms
      FROM messages
      WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
      ORDER BY id`,
@@ -1797,6 +1937,7 @@ exports.getThread = async (req, res) => {
       body: row.body,
       sentAt: row.created_at,
       fromMe: Number(row.sender_id) === Number(req.user.id),
+      attachment: attachmentOf(row),
     })),
   });
 };
@@ -1832,7 +1973,14 @@ exports.getMessages = async (req, res) => {
 exports.createMessage = async (req, res) => {
   await ensureAcademicSchema();
   const { receiverId, subject, body } = req.body;
-  if (!body || !body.trim()) return res.status(400).json({ message: "Write a message first" });
+
+  const { columns: attachment, error: attachmentError } = readAttachment(req.body.attachment);
+  if (attachmentError) return res.status(400).json({ message: attachmentError });
+
+  // Text is only required when there is nothing else to send - a photo or a voice note
+  // stands on its own, and a caption alongside it is optional.
+  const text = String(body || "").trim();
+  if (!text && !attachment) return res.status(400).json({ message: "Write a message first" });
 
   // A missing recipient used to fall back to "the first account of the opposite role", and
   // to yourself when there wasn't one - so a mis-wired client silently posted messages into
@@ -1849,10 +1997,55 @@ exports.createMessage = async (req, res) => {
   if (!recipients.length) return res.status(404).json({ message: "That account is not available" });
 
   const [result] = await pool.query(
-    "INSERT INTO messages (sender_id, receiver_id, subject, body) VALUES (?, ?, ?, ?)",
-    [req.user.id, targetId, subject || "Academic message", body.trim()]
+    `INSERT INTO messages
+      (sender_id, receiver_id, subject, body, attachment_kind, file_name, file_mime, file_data, file_size, duration_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      req.user.id,
+      targetId,
+      subject || "Academic message",
+      // A sticker carries its character in body; anything else keeps the caption, or null.
+      attachment?.kind === "sticker" ? attachment.body : text || null,
+      attachment?.kind || null,
+      attachment?.fileName || null,
+      attachment?.mime || null,
+      attachment?.buffer || null,
+      attachment?.size || null,
+      attachment?.durationMs || null,
+    ]
   );
   res.status(201).json({ id: String(result.insertId), message: "Message sent" });
+};
+
+/**
+ * Serves an attachment's bytes. Only the two people in the conversation can read it - the id
+ * is a small integer, so without this check anyone signed in could walk the range and read
+ * every photo and voice note on the platform.
+ */
+exports.downloadMessageAttachment = async (req, res) => {
+  await ensureAcademicSchema();
+
+  const [rows] = await pool.query(
+    "SELECT sender_id, receiver_id, attachment_kind, file_name, file_data FROM messages WHERE id = ?",
+    [req.params.id]
+  );
+  const message = rows[0];
+  if (!message || !message.file_data) return res.status(404).json({ message: "Attachment not found" });
+
+  const mine = Number(message.sender_id) === Number(req.user.id) || Number(message.receiver_id) === Number(req.user.id);
+  if (!mine) return res.status(403).json({ message: "You don't have access to this attachment" });
+
+  const safeName = safeFileName(message.file_name);
+    "attachment";
+
+  // Type from the extension and the kind, never from what the sender claimed - and still
+  // sent as an attachment, so opening the URL directly downloads rather than renders. The
+  // chat fetches these as blobs and builds its own object URLs, so inline display is
+  // unaffected by that.
+  res.setHeader("Content-Type", mimeForAttachment(message.attachment_kind, message.file_name));
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+  res.send(message.file_data);
 };
 
 exports.markMessageRead = async (req, res) => {
