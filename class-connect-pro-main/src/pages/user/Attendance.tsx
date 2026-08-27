@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { Calendar, Check, X, Clock, Save, Filter, Trash2, QrCode, ScanLine, TimerReset } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { QRCodeSVG } from "qrcode.react";
+import { Calendar, Camera, Check, X, Clock, Save, Filter, Trash2, QrCode, ScanLine, TimerReset } from "lucide-react";
+import { QrScannerDialog } from "@/components/attendance/QrScannerDialog";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +22,7 @@ import { toast } from "sonner";
 import { students as mockStudents } from "@/data/mockData";
 import { useRole } from "@/context/RoleContext";
 import { apiRequest } from "@/lib/api";
+import { ATTENDANCE_CODE_PARAM, buildAttendanceLink, parseAttendanceCode } from "@/lib/attendanceCode";
 import { useAttendanceSummary } from "@/hooks/useAttendanceSummary";
 
 type Status = "present" | "absent" | "late" | null;
@@ -82,6 +86,8 @@ export default function Attendance() {
   const [studentToRemove, setStudentToRemove] = useState<RosterStudent | null>(null);
   const [qrSession, setQrSession] = useState<{ code: string; windowMinutes: number; expiresAt: string } | null>(null);
   const [scanCode, setScanCode] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     if (!canTeach) return;
@@ -168,15 +174,10 @@ export default function Attendance() {
       });
   };
 
-  const handleScanAttendance = () => {
-    if (!scanCode.trim()) {
-      toast.error("Enter the QR attendance code first.");
-      return;
-    }
-
+  const submitAttendanceCode = useCallback((code: string) => {
     apiRequest<{ message: string }>("/academic/attendance-sessions/check-in", {
       method: "POST",
-      body: JSON.stringify({ code: scanCode.trim() }),
+      body: JSON.stringify({ code }),
     })
       .then(() => {
         toast.success("Attendance recorded", {
@@ -187,7 +188,50 @@ export default function Attendance() {
       .catch((error) => {
         toast.error(error instanceof Error ? error.message : "Could not record attendance");
       });
+  }, []);
+
+  const handleScanAttendance = () => {
+    // Accepts a pasted check-in link as readily as a bare code - someone sent the link in a
+    // chat rather than showing the QR, and pasting it should just work.
+    const code = parseAttendanceCode(scanCode);
+    if (!code) {
+      toast.error("Enter the QR attendance code first.");
+      return;
+    }
+    submitAttendanceCode(code);
   };
+
+  const handleScanned = useCallback(
+    (code: string) => {
+      setScannerOpen(false);
+      setScanCode(code);
+      submitAttendanceCode(code);
+    },
+    [submitAttendanceCode]
+  );
+
+  // Arriving from a scanned QR: the link carries ?code=..., so check in without making the
+  // student press anything. The parameter is cleared straight away so a refresh (or the back
+  // button) doesn't fire a second check-in, and the guard covers React's double-invoked
+  // effects in development.
+  const autoCheckedIn = useRef(false);
+  useEffect(() => {
+    if (canTeach || autoCheckedIn.current) return;
+
+    const code = parseAttendanceCode(searchParams.get(ATTENDANCE_CODE_PARAM));
+    if (!code) return;
+
+    autoCheckedIn.current = true;
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete(ATTENDANCE_CODE_PARAM);
+        return next;
+      },
+      { replace: true }
+    );
+    submitAttendanceCode(code);
+  }, [canTeach, searchParams, setSearchParams, submitAttendanceCode]);
 
   const handleSave = async () => {
     const payload = Object.entries(records)
@@ -255,11 +299,15 @@ export default function Attendance() {
               </div>
             </div>
             <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+              <Button variant="outline" className="h-10" onClick={() => setScannerOpen(true)}>
+                <Camera className="mr-2 h-4 w-4" />
+                Scan with camera
+              </Button>
               <Input
                 value={scanCode}
                 onChange={(event) => setScanCode(event.target.value)}
-                placeholder="RUPPER-20260710-1234"
-                className="h-10 sm:w-64"
+                placeholder="RUPPER-734835-5401"
+                className="h-10 sm:w-56"
               />
               <Button className="bg-gradient-primary text-primary-foreground" onClick={handleScanAttendance}>
                 <Check className="mr-2 h-4 w-4" />
@@ -268,6 +316,8 @@ export default function Attendance() {
             </div>
           </div>
         </Card>
+
+        <QrScannerDialog open={scannerOpen} onClose={() => setScannerOpen(false)} onScan={handleScanned} />
         <Card className="border-border/60 p-6 shadow-soft">
           <div className="grid gap-4 sm:grid-cols-3">
             <SummaryTile label="Present" value={`${mySummary?.present ?? 0} days`} tone="success" />
@@ -338,15 +388,27 @@ export default function Attendance() {
           </div>
 
           <div className="rounded-2xl border border-border bg-secondary/30 p-4 text-center">
-            <div className="mx-auto grid h-32 w-32 grid-cols-4 gap-1 rounded-xl bg-background p-3 shadow-soft">
-              {Array.from({ length: 16 }).map((_, index) => (
-                <span
-                  key={index}
-                  className={`rounded-sm ${qrSession && (index + qrSession.code.length) % 3 !== 0 ? "bg-foreground" : "bg-muted"}`}
+            {/* Always rendered on white with a quiet zone: a QR inverted by the dark theme, or
+                run right up to its edge, is one most scanners refuse to read. The payload is a
+                check-in link, so a phone's own camera app can open it - the student doesn't
+                have to be in this app already. */}
+            <div className="mx-auto flex h-32 w-32 items-center justify-center rounded-xl bg-white p-2 shadow-soft">
+              {qrSession ? (
+                <QRCodeSVG
+                  value={buildAttendanceLink(window.location.origin, qrSession.code)}
+                  size={112}
+                  level="M"
+                  marginSize={0}
+                  title={`Attendance code ${qrSession.code}`}
                 />
-              ))}
+              ) : (
+                <QrCode className="h-10 w-10 text-muted-foreground/40" />
+              )}
             </div>
             <p className="mt-3 font-mono text-sm font-semibold text-foreground">{qrSession?.code || "No active code"}</p>
+            {qrSession && (
+              <p className="mt-1 text-xs text-muted-foreground">Scan with any camera, or type the code in.</p>
+            )}
             <Button className="mt-4 w-full bg-gradient-primary text-primary-foreground" onClick={generateQrSession}>
               <QrCode className="mr-2 h-4 w-4" />
               Generate QR code

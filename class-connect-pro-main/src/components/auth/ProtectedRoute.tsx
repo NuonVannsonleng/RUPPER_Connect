@@ -1,4 +1,4 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth, type UserRole } from "@/context/AuthContext";
 import { landingPathFor } from "@/lib/routes";
 
@@ -10,6 +10,7 @@ interface ProtectedRouteProps {
 
 export default function ProtectedRoute({ children, allow }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -19,7 +20,9 @@ export default function ProtectedRoute({ children, allow }: ProtectedRouteProps)
     );
   }
 
-  if (!user) return <Navigate to="/login" replace />;
+  // Carry the attempted URL through sign-in. A student who scans the attendance QR while
+  // signed out would otherwise land on the dashboard with the code silently dropped.
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
 
   // Guarding here as well as on the server: this only tidies up the UI, the API is what
   // actually enforces access.

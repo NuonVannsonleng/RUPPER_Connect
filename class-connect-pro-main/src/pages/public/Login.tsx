@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 
@@ -14,6 +14,7 @@ import { OAuthProvider, useAuth, UserRole } from "@/context/AuthContext";
 export default function Login() {
   const { login, startOAuthLogin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   // Only used when a Google sign-in creates a brand new account; existing accounts keep
@@ -37,9 +38,13 @@ export default function Login() {
 
     if (account) {
       toast.success("Welcome back!");
-      // Route by the role the account actually has, which is how admins land in the
-      // admin area without the login form ever having to offer that choice.
-      navigate(account.role === "admin" ? "/admin" : "/dashboard");
+      // Back to whatever they were trying to reach - set by ProtectedRoute, so it is always
+      // an internal location and never something an attacker can point elsewhere.
+      // Otherwise route by the role the account actually has, which is how admins land in
+      // the admin area without the login form ever having to offer that choice.
+      const from = (location.state as { from?: { pathname: string; search: string } } | null)?.from;
+      if (from?.pathname) navigate(`${from.pathname}${from.search || ""}`, { replace: true });
+      else navigate(account.role === "admin" ? "/admin" : "/dashboard");
     } else {
       // Show what the server said. Blanketing every failure as "wrong password" once sent
       // someone hunting for a bad password when the API was actually rejecting the request.
