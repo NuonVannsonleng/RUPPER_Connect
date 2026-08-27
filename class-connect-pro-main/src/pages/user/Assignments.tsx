@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { CheckCircle2, Clock, Download, FileUp, Loader2, MessageSquareText, Plus, Star, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Eye, FileUp, Loader2, MessageSquareText, Plus, Star, XCircle } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/EmptyState";
+import { FilePreviewDialog, type PreviewFile } from "@/components/shared/FilePreviewDialog";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { SyncStatus } from "@/components/shared/SyncStatus";
@@ -23,7 +24,7 @@ import {
   useAcademicAssignments,
   useAcademicCourses,
 } from "@/hooks/useAcademicPlatform";
-import { apiRequest, buildApiUrl, getToken } from "@/lib/api";
+import { apiRequest } from "@/lib/api";
 
 interface AssignmentSubmission {
   id: string;
@@ -85,32 +86,13 @@ const formatBytes = (bytes?: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-async function downloadSubmissionFile(downloadUrl: string, fileName?: string) {
-  try {
-    const res = await fetch(buildApiUrl(downloadUrl), {
-      headers: { Authorization: `Bearer ${getToken() || ""}` },
-    });
-    if (!res.ok) throw new Error("Download failed");
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName || "submission";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  } catch {
-    toast.error("Could not download this file");
-  }
-}
-
 export default function Assignments() {
   const { canTeach } = useRole();
   const queryClient = useQueryClient();
   const { data: assignments = [], isFetching } = useAcademicAssignments();
   const { data: courses = [] } = useAcademicCourses();
   const [reviewingAssignment, setReviewingAssignment] = useState<AcademicAssignment | null>(null);
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [savingSubmissionId, setSavingSubmissionId] = useState<string | null>(null);
@@ -321,10 +303,17 @@ export default function Assignments() {
                       {assignment.submissionId && assignment.downloadUrl && (
                         <button
                           type="button"
-                          onClick={() => downloadSubmissionFile(assignment.downloadUrl!, assignment.fileName)}
+                          onClick={() =>
+                            setPreviewFile({
+                              title: assignment.fileName || "Your submission",
+                              subtitle: assignment.title,
+                              fileName: assignment.fileName,
+                              downloadUrl: assignment.downloadUrl,
+                            })
+                          }
                           className="flex w-full items-center gap-2 rounded-lg border border-border/60 bg-card px-3 py-2 text-left text-xs transition-base hover:border-primary/40"
                         >
-                          <Download className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                           <span className="truncate text-foreground">{assignment.fileName || "Your submission"}</span>
                         </button>
                       )}
@@ -472,10 +461,17 @@ export default function Assignments() {
                   {submission.downloadUrl ? (
                     <button
                       type="button"
-                      onClick={() => downloadSubmissionFile(submission.downloadUrl!, submission.fileName)}
+                      onClick={() =>
+                        setPreviewFile({
+                          title: submission.fileName || "Submission",
+                          subtitle: `${submission.studentName} - ${reviewingAssignment?.title ?? ""}`,
+                          fileName: submission.fileName,
+                          downloadUrl: submission.downloadUrl,
+                        })
+                      }
                       className="mb-3 flex w-full items-center gap-2 rounded-lg border border-border/60 bg-card px-3 py-2 text-left text-xs transition-base hover:border-primary/40"
                     >
-                      <Download className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <Eye className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       <span className="truncate text-foreground">{submission.fileName}</span>
                       {submission.fileSize ? (
                         <span className="ml-auto shrink-0 text-muted-foreground">{formatBytes(submission.fileSize)}</span>
@@ -520,6 +516,8 @@ export default function Assignments() {
           )}
         </DialogContent>
       </Dialog>
+
+      <FilePreviewDialog file={previewFile} onClose={() => setPreviewFile(null)} />
     </>
   );
 }
