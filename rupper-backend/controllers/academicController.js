@@ -1684,15 +1684,121 @@ exports.getRiskAlerts = async (req, res) => {
 };
 
 exports.getContacts = async (req, res) => {
-  // Framed around "who am I not" rather than "am I a teacher": an admin substituting for a
-  // teacher isn't literally role "teacher", but they still need student contacts, not other
-  // teachers'. Only a student should ever see the teacher list.
-  const oppositeRole = req.user.role === "student" ? "teacher" : "student";
+  // Everyone on the platform except yourself and deactivated accounts. This used to return
+  // only the opposite role, which meant an admin could never message a teacher and two
+  // teachers could never message each other - the directory is the whole point of it.
   const [rows] = await pool.query(
-    "SELECT id, name, email, role FROM users WHERE role = ? AND id <> ? ORDER BY name",
-    [oppositeRole, req.user.id]
+    `SELECT id, name, email, role, avatar
+     FROM users
+     WHERE id <> ? AND is_active = TRUE
+     ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'teacher' THEN 2 ELSE 3 END, name`,
+    [req.user.id]
   );
-  res.json(rows.map((row) => ({ id: String(row.id), name: row.name, email: row.email, role: row.role })));
+  res.json(
+    rows.map((row) => ({
+      id: String(row.id),
+      name: row.name,
+      email: row.email,
+      role: row.role,
+      avatar: row.avatar || "",
+    }))
+  );
+};
+
+/**
+ * One row per person you have exchanged messages with, newest conversation first, carrying
+ * the last line and how many of theirs you have not read - everything the conversation list
+ * needs without pulling every message down.
+ */
+exports.getConversations = async (req, res) => {
+  await ensureAcademicSchema();
+
+  // DISTINCT ON keeps the highest id per partner, which is that conversation's latest message.
+  const [threads] = await pool.query(
+    `SELECT DISTINCT ON (t.partner)
+       t.partner, t.body, t.created_at AS "lastAt", t.sender_id AS "lastSenderId",
+       u.name, u.role, u.avatar
+     FROM (
+       SELECT CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS partner,
+              id, body, created_at, sender_id
+       FROM messages
+       WHERE sender_id = ? OR receiver_id = ?
+     ) t
+     JOIN users u ON u.id = t.partner
+     ORDER BY t.partner, t.id DESC`,
+    [req.user.id, req.user.id, req.user.id]
+  );
+
+  const [unread] = await pool.query(
+    `SELECT sender_id AS partner, COUNT(*) AS total
+     FROM messages
+     WHERE receiver_id = ? AND is_read = FALSE
+     GROUP BY sender_id`,
+    [req.user.id]
+  );
+  const unreadByPartner = new Map(unread.map((row) => [Number(row.partner), Number(row.total)]));
+
+  res.json(
+    threads
+      .map((row) => ({
+        userId: String(row.partner),
+        name: row.name,
+        role: row.role,
+        avatar: row.avatar || "",
+        lastMessage: row.body,
+        lastAt: row.lastAt,
+        lastFromMe: Number(row.lastSenderId) === Number(req.user.id),
+        unreadCount: unreadByPartner.get(Number(row.partner)) || 0,
+      }))
+      // DISTINCT ON forces ORDER BY partner, so the newest-first ordering is applied here.
+      .sort((a, b) => String(b.lastAt).localeCompare(String(a.lastAt)))
+  );
+};
+
+/**
+ * The full exchange with one person, oldest first, and marks their side as read - opening a
+ * conversation is what "reading" it means here, so there is no separate mark-read call.
+ */
+exports.getThread = async (req, res) => {
+  await ensureAcademicSchema();
+
+  const partnerId = Number(req.params.userId);
+  if (!Number.isInteger(partnerId) || partnerId <= 0) {
+    return res.status(400).json({ message: "Invalid conversation" });
+  }
+
+  const [people] = await pool.query("SELECT id, name, email, role, avatar FROM users WHERE id = ?", [partnerId]);
+  if (!people.length) return res.status(404).json({ message: "That account no longer exists" });
+
+  const [rows] = await pool.query(
+    `SELECT id, sender_id, body, created_at, is_read
+     FROM messages
+     WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+     ORDER BY id`,
+    [req.user.id, partnerId, partnerId, req.user.id]
+  );
+
+  await pool.query("UPDATE messages SET is_read = TRUE WHERE receiver_id = ? AND sender_id = ? AND is_read = FALSE", [
+    req.user.id,
+    partnerId,
+  ]);
+
+  const person = people[0];
+  res.json({
+    person: {
+      id: String(person.id),
+      name: person.name,
+      email: person.email,
+      role: person.role,
+      avatar: person.avatar || "",
+    },
+    messages: rows.map((row) => ({
+      id: String(row.id),
+      body: row.body,
+      sentAt: row.created_at,
+      fromMe: Number(row.sender_id) === Number(req.user.id),
+    })),
+  });
 };
 
 exports.getMessages = async (req, res) => {
@@ -1726,18 +1832,25 @@ exports.getMessages = async (req, res) => {
 exports.createMessage = async (req, res) => {
   await ensureAcademicSchema();
   const { receiverId, subject, body } = req.body;
-  if (!body) return res.status(400).json({ message: "body is required" });
+  if (!body || !body.trim()) return res.status(400).json({ message: "Write a message first" });
 
-  let nextReceiverId = receiverId;
-  if (!nextReceiverId) {
-    const oppositeRole = req.user.role === "student" ? "teacher" : "student";
-    const [users] = await pool.query("SELECT id FROM users WHERE role = ? AND id <> ? ORDER BY id LIMIT 1", [oppositeRole, req.user.id]);
-    nextReceiverId = users[0]?.id || req.user.id;
+  // A missing recipient used to fall back to "the first account of the opposite role", and
+  // to yourself when there wasn't one - so a mis-wired client silently posted messages into
+  // a stranger's inbox. Say what's wrong instead.
+  const targetId = Number(receiverId);
+  if (!Number.isInteger(targetId) || targetId <= 0) {
+    return res.status(400).json({ message: "Choose who to send this to" });
   }
+  if (targetId === Number(req.user.id)) {
+    return res.status(400).json({ message: "You can't message yourself" });
+  }
+
+  const [recipients] = await pool.query("SELECT id FROM users WHERE id = ? AND is_active = TRUE", [targetId]);
+  if (!recipients.length) return res.status(404).json({ message: "That account is not available" });
 
   const [result] = await pool.query(
     "INSERT INTO messages (sender_id, receiver_id, subject, body) VALUES (?, ?, ?, ?)",
-    [req.user.id, nextReceiverId, subject || "Academic message", body.trim()]
+    [req.user.id, targetId, subject || "Academic message", body.trim()]
   );
   res.status(201).json({ id: String(result.insertId), message: "Message sent" });
 };

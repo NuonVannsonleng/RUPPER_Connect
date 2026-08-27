@@ -39,6 +39,9 @@ router.get("/risk-alerts", auth, asyncHandler(c.getRiskAlerts));
 
 router.get("/contacts", auth, asyncHandler(c.getContacts));
 router.get("/messages", auth, asyncHandler(c.getMessages));
+router.get("/messages/conversations", auth, asyncHandler(c.getConversations));
+// Placed after /conversations so that literal path is not captured as a :userId.
+router.get("/messages/thread/:userId", auth, asyncHandler(c.getThread));
 router.post("/messages", auth, asyncHandler(c.createMessage));
 router.put("/messages/:id/read", auth, asyncHandler(c.markMessageRead));
 

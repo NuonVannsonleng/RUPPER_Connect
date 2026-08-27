@@ -28,12 +28,41 @@ export const ACADEMIC_TRANSCRIPT_QUERY_KEY = ["academic", "transcript"] as const
 export const ACADEMIC_MESSAGES_QUERY_KEY = ["academic", "messages"] as const;
 export const ACADEMIC_RISK_ALERTS_QUERY_KEY = ["academic", "risk-alerts"] as const;
 export const ACADEMIC_CONTACTS_QUERY_KEY = ["academic", "contacts"] as const;
+export const ACADEMIC_CONVERSATIONS_QUERY_KEY = ["academic", "conversations"] as const;
+export const academicThreadQueryKey = (userId: string) => ["academic", "thread", userId] as const;
+
+export type DirectoryRole = "admin" | "teacher" | "student";
 
 export interface AcademicContact {
   id: string;
   name: string;
   email: string;
-  role: "teacher" | "student";
+  role: DirectoryRole;
+  avatar?: string;
+}
+
+/** A person you have messages with, plus the preview the conversation list shows. */
+export interface Conversation {
+  userId: string;
+  name: string;
+  role: DirectoryRole;
+  avatar?: string;
+  lastMessage: string;
+  lastAt: string;
+  lastFromMe: boolean;
+  unreadCount: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  body: string;
+  sentAt: string;
+  fromMe: boolean;
+}
+
+export interface ChatThread {
+  person: AcademicContact;
+  messages: ChatMessage[];
 }
 
 // Falls back to demo data only when the backend request itself fails (e.g. offline),
@@ -143,6 +172,29 @@ export function useAcademicRiskAlerts() {
     queryKey: ACADEMIC_RISK_ALERTS_QUERY_KEY,
     queryFn: fetchAcademicRiskAlerts,
     initialData: studentRiskAlerts,
+  });
+}
+
+/**
+ * Polling stands in for a socket here. The backend is a plain REST service on a free
+ * instance, so a WebSocket would need infrastructure this app does not have; refetching
+ * while the tab is open is enough to make a reply show up on its own.
+ */
+export function useConversations() {
+  return useQuery({
+    queryKey: ACADEMIC_CONVERSATIONS_QUERY_KEY,
+    queryFn: () => apiRequest<Conversation[]>("/academic/messages/conversations"),
+    initialData: [],
+    refetchInterval: 15000,
+  });
+}
+
+export function useChatThread(userId: string | null) {
+  return useQuery({
+    queryKey: academicThreadQueryKey(userId ?? "none"),
+    queryFn: () => apiRequest<ChatThread>(`/academic/messages/thread/${userId}`),
+    enabled: Boolean(userId),
+    refetchInterval: 8000,
   });
 }
 
