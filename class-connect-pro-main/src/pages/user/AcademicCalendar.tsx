@@ -3,6 +3,7 @@ import { CalendarDays, CalendarRange, Clock, GraduationCap, Pencil, PartyPopper,
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { MonthCalendar } from "@/components/calendar/MonthCalendar";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SyncStatus } from "@/components/shared/SyncStatus";
@@ -27,6 +28,7 @@ import { useRole } from "@/context/RoleContext";
 import type { AcademicCalendarEvent } from "@/data/academicPlatform";
 import { ACADEMIC_CALENDAR_QUERY_KEY, useAcademicCalendar, useAcademicCourses } from "@/hooks/useAcademicPlatform";
 import { apiRequest } from "@/lib/api";
+import { formatLongDate, todayIso as currentIso, type MonthCursor } from "@/lib/calendarMonth";
 
 /** Plain YYYY-MM-DD for today in the viewer's local time zone - event dates are stored and
  *  returned the same way, so this stays a safe string comparison with no timezone reinterpretation. */
@@ -44,11 +46,14 @@ const typeIcon = {
   event: CalendarRange,
 };
 
+// `event` uses info rather than primary: this theme's primary is hsl(0 78% 50%) and
+// destructive is hsl(0 75% 55%), the same red, so an event and an exam were indistinguishable
+// at a glance - which matters most in the month grid, where colour is all you get.
 const typeTone = {
   exam: "bg-destructive/10 text-destructive border-destructive/20",
   assignment: "bg-warning/15 text-warning border-warning/20",
   holiday: "bg-success/10 text-success border-success/20",
-  event: "bg-primary/10 text-primary border-primary/20",
+  event: "bg-info/10 text-info border-info/20",
 };
 
 const NO_COURSE = "none";
@@ -66,14 +71,23 @@ export default function AcademicCalendar() {
   const [editingEvent, setEditingEvent] = useState<AcademicCalendarEvent | null>(null);
   const [eventToDelete, setEventToDelete] = useState<AcademicCalendarEvent | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  // The grid opens on the current month, and on today, so the first thing anyone sees is
+  // where they actually are in the year.
+  const [cursor, setCursor] = useState<MonthCursor>(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [selectedIso, setSelectedIso] = useState<string>(() => currentIso());
   const counts = events.reduce<Record<string, number>>((total, event) => {
     total[event.type] = (total[event.type] || 0) + 1;
     return total;
   }, {});
 
-  const openDialog = () => {
+  const selectedDayEvents = events.filter((event) => event.date === selectedIso);
+
+  const openDialog = (date?: string) => {
     setEditingEvent(null);
-    setEventForm(emptyEventForm);
+    setEventForm({ ...emptyEventForm, date: date ?? "" });
     setDialogOpen(true);
   };
 
@@ -152,7 +166,7 @@ export default function AcademicCalendar() {
         description="Track exams, assignments, holidays, university events, and important academic dates."
         actions={
           canTeach ? (
-            <Button size="sm" variant="secondary" className="font-semibold" onClick={openDialog}>
+            <Button size="sm" variant="secondary" className="font-semibold" onClick={() => openDialog()}>
               <Plus className="mr-2 h-4 w-4" />
               Add event
             </Button>
@@ -176,6 +190,78 @@ export default function AcademicCalendar() {
           );
         })}
       </div>
+
+      <Card className="mb-6 overflow-hidden border-border/60 shadow-soft">
+        <MonthCalendar
+          events={events}
+          cursor={cursor}
+          onCursorChange={setCursor}
+          selectedIso={selectedIso}
+          onSelectDay={setSelectedIso}
+        />
+
+        {/* What is on the day you tapped. The grid can only fit two chips per cell, so this
+            is where a busy day is actually read - and where a teacher adds to it. */}
+        <div className="border-t border-border bg-secondary/20 px-4 py-4 sm:px-5">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-sm font-bold text-foreground">{formatLongDate(selectedIso)}</h2>
+            {canTeach && (
+              <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => openDialog(selectedIso)}>
+                <Plus className="h-3.5 w-3.5" />
+                Add on this day
+              </Button>
+            )}
+          </div>
+
+          {selectedDayEvents.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing scheduled for this day.</p>
+          ) : (
+            <div className="grid gap-2">
+              {selectedDayEvents.map((event) => {
+                const Icon = typeIcon[event.type];
+                return (
+                  <div
+                    key={event.id}
+                    className="flex flex-wrap items-center gap-3 rounded-lg border border-border/70 bg-card px-3 py-2"
+                  >
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${typeTone[event.type]}`}>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold text-foreground">{event.title}</span>
+                      {event.course && <span className="block text-xs text-muted-foreground">{event.course}</span>}
+                    </span>
+                    <Badge className={`border ${typeTone[event.type]}`}>{event.type}</Badge>
+                    <Badge variant="outline">{event.priority}</Badge>
+                    {canTeach && (
+                      <span className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground"
+                          onClick={() => openEditDialog(event)}
+                          aria-label={`Edit ${event.title}`}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => setEventToDelete(event)}
+                          aria-label={`Delete ${event.title}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </Card>
 
       <Card className="overflow-hidden border-border/60 shadow-soft">
         <div className="border-b border-border bg-secondary/40 px-5 py-4">
