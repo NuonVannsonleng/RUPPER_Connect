@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { apiRequest, buildApiUrl, getToken, TOKEN_KEY } from "@/lib/api";
+import { ApiError, apiRequest, buildApiUrl, getToken, TOKEN_KEY } from "@/lib/api";
 
 /**
  * Two top-level groups, with "user" splitting by what someone can do:
@@ -95,19 +95,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const saved = remember ? localStorage.getItem(STORAGE_KEY) : sessionStorage.getItem(STORAGE_KEY);
     const token = getToken();
 
-    if (saved) setUser(safeParse<AuthUser | null>(saved, null));
+    const cached = safeParse<AuthUser | null>(saved, null);
+    if (cached) setUser(cached);
 
     if (!token) {
       setLoading(false);
       return;
     }
 
+    // With a session already stored on this device there is nothing to wait for: show the app
+    // straight away and confirm the token in the background. Every request is authorised by
+    // the API on its own, so the worst a stale cache can do is show an old display name for a
+    // moment - against that, blocking here meant staring at "Loading your workspace..." for
+    // the ~30 seconds a cold start takes.
+    if (cached) setLoading(false);
+
     apiRequest<{ user: AuthUser }>("/auth/me")
       .then(({ user }) => {
         if (active) persistSession(user, token, remember);
       })
-      .catch(() => {
-        if (active) clearSession();
+      .catch((error: unknown) => {
+        // Only an actual refusal ends the session. A timeout, or a 502 from a server that is
+        // still waking, says nothing about whether the token is valid - and signing people
+        // out over it is why a cold start could drop you back on the login page until you
+        // refreshed.
+        const status = error instanceof ApiError ? error.status : 0;
+        if (active && (status === 401 || status === 403)) clearSession();
       })
       .finally(() => {
         if (active) setLoading(false);
