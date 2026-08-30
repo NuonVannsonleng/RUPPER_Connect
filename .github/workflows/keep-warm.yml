@@ -1,0 +1,54 @@
+name: Keep the API awake
+
+# Render's free plan suspends a service after 15 minutes without traffic, and waking it takes
+# around half a minute of the user's time - measured at 32s, against 0.2s once warm. Whoever
+# arrives first each morning pays that, which is what made signing in look broken.
+#
+# Pinging every 10 minutes keeps the instance up, but only through the hours anyone is
+# actually using it: free web services share a 750 instance-hour monthly allowance, and
+# holding this one open around the clock would spend ~730 of them and leave nothing for a
+# second service. The window below is 06:00-23:00 in Phnom Penh (UTC+7), about 540 hours a
+# month, which stays comfortably inside the allowance.
+#
+# GitHub's scheduled runs are best-effort and can drift by several minutes under load, which
+# is fine here - a late ping costs one cold start, not correctness. Two things to know: the
+# schedule is disabled automatically after 60 days without a commit to the repo, and it stops
+# mattering entirely if the service ever moves to a paid plan, at which point delete this file.
+# For a firmer guarantee, an external monitor (cron-job.org, UptimeRobot) does the same job.
+
+on:
+  schedule:
+    - cron: "*/10 0-16,23 * * *"
+  workflow_dispatch:
+
+# A run still in progress when the next is due should simply be replaced.
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    name: Ping /api/health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake the service
+        run: |
+          # --max-time covers a full cold start; --retry picks up the 502s Render's edge
+          # serves while the instance is still coming up.
+          code=$(curl --silent --show-error --location \
+                      --max-time 120 \
+                      --retry 3 --retry-delay 10 --retry-all-errors \
+                      --write-out '%{http_code}' --output /tmp/health.json \
+                      https://rupper-connect.onrender.com/api/health) || true
+
+          echo "HTTP $code"
+          cat /tmp/health.json 2>/dev/null || true
+          echo
+
+          # A ping that fails is worth seeing in the Actions tab, since it usually means the
+          # service is down rather than merely asleep.
+          if [ "$code" != "200" ]; then
+            echo "::warning::Health check returned $code"
+            exit 1
+          fi
