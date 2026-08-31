@@ -13,7 +13,19 @@
  * 730 of them, leaving no margin. Seventeen hours a day is roughly 520, which covers the
  * school day with room to spare.
  *
- * Set KEEP_WARM=false to turn it off.
+ * This works alongside .github/workflows/keep-warm.yml rather than replacing it, and the two
+ * do different halves of the job:
+ *
+ *   - The workflow pings from outside, so it can *wake* an instance that has already gone to
+ *     sleep - overnight, or after a deploy. This process cannot do that: once suspended, it
+ *     is not running to ping anything.
+ *   - This timer fires on a real 10-minute interval from inside the instance, so it *keeps*
+ *     a live one awake. GitHub's scheduled runs are best-effort and routinely drift well past
+ *     the 15-minute idle window under load, which is why the workflow alone still left cold
+ *     starts - one was measured at 22 seconds during working hours with the schedule active.
+ *
+ * Delete both if the service ever moves to a paid plan. Set KEEP_WARM=false to turn this half
+ * off on its own.
  */
 
 const PING_INTERVAL_MS = 10 * 60 * 1000; // Comfortably inside Render's 15-minute idle window.

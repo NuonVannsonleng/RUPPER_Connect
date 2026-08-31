@@ -15,6 +15,10 @@ name: Keep the API awake
 # schedule is disabled automatically after 60 days without a commit to the repo, and it stops
 # mattering entirely if the service ever moves to a paid plan, at which point delete this file.
 # For a firmer guarantee, an external monitor (cron-job.org, UptimeRobot) does the same job.
+#
+# rupper-backend/services/keepWarm.js does the other half: this workflow can wake an instance
+# that is already asleep, which the server cannot do for itself, while that timer holds a live
+# one open on a real 10-minute interval rather than a best-effort one.
 
 on:
   schedule:
