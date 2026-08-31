@@ -7,6 +7,7 @@ const { dedupeSeedData } = require("./migrations/dedupeSeedData");
 const { bootstrapAdmin, ensurePasswordChangedColumn, ensureUserStatusColumn } = require("./config/bootstrapAdmin");
 const { ensureTable: ensureResetTokenTable } = require("./services/passwordReset");
 const { ensureTable: ensureEmailChangeTable } = require("./services/emailChange");
+const { startKeepWarm } = require("./services/keepWarm");
 const pool = getConnection();
 
 const app = express();
@@ -133,4 +134,17 @@ bootstrapAdmin()
   })
   .catch((error) => console.error("Admin bootstrap failed:", error.message));
 
-app.listen(PORT, () => console.log(`RUPPER backend running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`RUPPER backend running on http://localhost:${PORT}`);
+
+  // Started after listen so the first ping can actually be served.
+  const keepWarm = startKeepWarm();
+  if (keepWarm.enabled) {
+    console.log(
+      `Keep-warm: pinging ${keepWarm.url} every 10 minutes between ` +
+        `${String(keepWarm.startHour).padStart(2, "0")}:00 and ${String(keepWarm.endHour).padStart(2, "0")}:00 ${keepWarm.timeZone}.`
+    );
+  } else {
+    console.log(`Keep-warm: off (${keepWarm.reason}).`);
+  }
+});

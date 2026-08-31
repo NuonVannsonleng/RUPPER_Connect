@@ -90,6 +90,25 @@ After the backend is deployed, set this in Vercel for the frontend:
 VITE_API_URL=https://rupper-connect.onrender.com/api
 ```
 
+## Why the first request of the day used to be slow
+
+Render suspends a free web service after 15 minutes without an inbound request. Waking it was
+measured at 22 seconds on a good day and 235 seconds on a bad one, and because `apiRequest`
+has no timeout, signing in during that window looked frozen rather than slow.
+
+In production the server now pings its own `/api/health` every 10 minutes, which arrives back
+through Render's edge as a normal inbound request and resets the idle timer. It only does so
+between 06:00 and 23:00 Phnom Penh time - the free plan allows 750 instance-hours a month, and
+staying up around the clock would use roughly 730 of them with nothing to spare, where a
+17-hour window uses about 520.
+
+Render sets `RENDER_EXTERNAL_URL` itself, so this needs no configuration. `KEEP_WARM=false`
+turns it off; `KEEP_WARM_TIMEZONE`, `KEEP_WARM_START_HOUR` and `KEEP_WARM_END_HOUR` move the
+window. Outside production it does nothing.
+
+It still sleeps overnight, so the first sign-in of the morning can take a moment. The login
+screen pings the API as soon as it loads, so that wake overlaps with typing.
+
 ## Making yourself an admin
 
 Signup deliberately never grants the admin role. Either set `ADMIN_EMAIL` (and optionally
